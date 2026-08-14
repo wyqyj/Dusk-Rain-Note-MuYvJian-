@@ -1,15 +1,16 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification, screen, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { execFile } from 'child_process';
 import Store from 'electron-store';
+import { WorkspaceStorage } from './workspaceStorage';
 
 const pandocPath = app.isPackaged
   ? path.join(process.resourcesPath, 'pandoc', 'pandoc.exe')
   : path.join(__dirname, '..', '..', 'resources', 'pandoc', 'pandoc.exe');
 
-const dataDir = app.isPackaged
+let dataDir = app.isPackaged
   ? path.join(app.getPath('userData'), 'data')
   : path.join(__dirname, '..', 'data');
 try { fs.mkdirSync(dataDir, { recursive: true }); } catch {}
@@ -190,17 +191,38 @@ $$e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!} = 1 + x + \\frac{x^2}{2!} + \\frac
 }
 
 let mainWindow: BrowserWindow | null = null;
+let workspaceStorage: WorkspaceStorage;
 const quickNoteWindows: BrowserWindow[] = [];
 const MAX_QUICK_NOTE_WINDOWS = 10;
 let todayPlanWindow: BrowserWindow | null = null;
 let timerStatsWindow: BrowserWindow | null = null;
 let lastQuickNoteCreateTime = 0;
 
+function resolveMainWindowBounds(savedBounds?: AppStore['windowBounds']): Electron.Rectangle {
+  const primaryArea = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(Math.max(savedBounds?.width || 1200, 900), primaryArea.width);
+  const height = Math.min(Math.max(savedBounds?.height || 800, 600), primaryArea.height);
+  const x = savedBounds?.x;
+  const y = savedBounds?.y;
+  const hasSavedPosition = typeof x === 'number' && typeof y === 'number';
+  const isVisible = hasSavedPosition && screen.getAllDisplays().some(({ workArea }) =>
+    x! < workArea.x + workArea.width && x! + width > workArea.x &&
+    y! < workArea.y + workArea.height && y! + height > workArea.y
+  );
+
+  if (isVisible) return { x: x!, y: y!, width, height };
+  return {
+    x: primaryArea.x + Math.round((primaryArea.width - width) / 2),
+    y: primaryArea.y + Math.round((primaryArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
 function createMainWindow(): void {
-  const savedBounds = store.get('windowBounds') as any;
+  const bounds = resolveMainWindowBounds(store.get('windowBounds'));
   mainWindow = new BrowserWindow({
-    width: savedBounds?.width || 1200, height: savedBounds?.height || 800,
-    x: savedBounds?.x, y: savedBounds?.y,
+    ...bounds,
     minWidth: 900, minHeight: 600, title: '暮雨笺',
     frame: false,
     backgroundColor: store.get('settings.theme') === 'dark' ? '#030712' : '#ffffff',
@@ -296,6 +318,40 @@ function createTimerStatsWindow(): void {
 }
 
 function setupIPC(): void {
+  ipcMain.handle('workspace-get-state', () => workspaceStorage.readState());
+  ipcMain.handle('workspace-save-state', (_e: any, state: string) => workspaceStorage.writeState(state));
+  ipcMain.handle('workspace-get-root', () => workspaceStorage.getRoot());
+  ipcMain.handle('workspace-choose-root', () => workspaceStorage.chooseRoot(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-migrate', (_e: any, destination: string) => workspaceStorage.migrate(destination));
+  ipcMain.handle('workspace-backup', () => workspaceStorage.createBackup(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-restore', () => workspaceStorage.restoreBackup(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-choose-question-book', () => workspaceStorage.chooseQuestionBook(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-read-question-book', (_e: any, folder: string) => workspaceStorage.readQuestionBook(folder));
+  ipcMain.handle('workspace-choose-book', () => workspaceStorage.chooseBookFile(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-open-path', (_e: any, target: string) => shell.openPath(target));
+  ipcMain.handle('workspace-open-examples', async () => {
+    const examplesPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'examples', 'workbench')
+      : path.join(__dirname, '..', '..', 'examples', 'workbench');
+    if (!fs.existsSync(examplesPath)) return { success: false, error: '案例目录不存在' };
+    const error = await shell.openPath(examplesPath);
+    return error ? { success: false, error } : { success: true, path: examplesPath };
+  });
+  ipcMain.handle('workspace-question-book-skill', () => {
+    try {
+      const directory = app.isPackaged
+        ? path.join(process.resourcesPath, 'skills', 'muyujian-question-book-import')
+        : path.join(__dirname, '..', '..', 'skills', 'muyujian-question-book-import');
+      const skillPath = path.join(directory, 'SKILL.md');
+      const promptPath = path.join(directory, 'references', 'agent-prompts.md');
+      if (!fs.existsSync(skillPath) || !fs.existsSync(promptPath)) throw new Error('题册整理技能资源缺失');
+      return { success: true, directory, skillPath, promptPath, prompt: fs.readFileSync(promptPath, 'utf8') };
+    } catch (error: any) { return { success: false, error: error.message }; }
+  });
+  ipcMain.handle('workspace-notify', (_e: any, title: string, body: string) => {
+    if (Notification.isSupported()) new Notification({ title, body }).show();
+    return true;
+  });
   ipcMain.handle('get-quick-note', () => store.get('quickNote', ''));
   ipcMain.on('save-quick-note', (_e: any, c: string) => store.set('quickNote', c));
   ipcMain.handle('get-settings', () => store.get('settings'));
@@ -343,23 +399,28 @@ function setupIPC(): void {
   ipcMain.on('close-timer-stats-window', () => timerStatsWindow?.close());
   ipcMain.on('minimize-timer-stats-window', () => timerStatsWindow?.minimize());
 
-  const notesPath = path.join(dataDir, 'notes.json');
+  const notesPath = () => path.join(workspaceStorage.getRoot(), 'notes.json');
+  const attachmentsPath = () => path.join(workspaceStorage.getRoot(), 'attachments.json');
   const notifyAllReload = () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('reload-notes');
     if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.webContents.send('reload-notes');
   };
 
-  ipcMain.handle('get-notes', () => { try { return fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf-8') : '[]'; } catch { return '[]'; } });
+  ipcMain.handle('get-notes', () => { try { const file = notesPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
+  ipcMain.handle('get-attachments', () => { try { const file = attachmentsPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
+  ipcMain.handle('save-attachments', (_e: any, data: string) => {
+    try { fs.writeFileSync(attachmentsPath(), data, 'utf-8'); return { success: true }; } catch { return { success: false }; }
+  });
   ipcMain.handle('save-notes', (_e: any, n: string) => {
-    try { fs.writeFileSync(notesPath, n, 'utf-8'); notifyAllReload(); return { success: true }; } catch { return { success: false }; }
+    try { fs.writeFileSync(notesPath(), n, 'utf-8'); notifyAllReload(); return { success: true }; } catch { return { success: false }; }
   });
   ipcMain.handle('create-quick-note', (_e: any, noteJson: string) => {
     try {
       let notes: any[] = [];
-      try { if (fs.existsSync(notesPath)) notes = JSON.parse(fs.readFileSync(notesPath, 'utf-8')); } catch { notes = []; }
+      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
       const note = JSON.parse(noteJson);
       notes.unshift(note);
-      fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2), 'utf-8');
+      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
       notifyAllReload();
       return { success: true, noteId: note.id };
     } catch (err: any) { return { success: false, error: err.message }; }
@@ -367,12 +428,12 @@ function setupIPC(): void {
   ipcMain.handle('update-quick-note-content', (_e: any, noteId: string, content: string) => {
     try {
       let notes: any[] = [];
-      try { if (fs.existsSync(notesPath)) notes = JSON.parse(fs.readFileSync(notesPath, 'utf-8')); } catch { notes = []; }
+      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
       const idx = notes.findIndex((n: any) => n.id === noteId);
       if (idx === -1) return { success: false, error: 'note not found' };
       notes[idx].content = content;
       notes[idx].updatedAt = Date.now();
-      fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2), 'utf-8');
+      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('reload-notes');
       if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.webContents.send('reload-notes');
       return { success: true };
@@ -381,11 +442,11 @@ function setupIPC(): void {
   ipcMain.handle('update-quick-note', (_e: any, noteId: string, updates: string) => {
     try {
       let notes: any[] = [];
-      try { if (fs.existsSync(notesPath)) notes = JSON.parse(fs.readFileSync(notesPath, 'utf-8')); } catch { notes = []; }
+      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
       const idx = notes.findIndex((n: any) => n.id === noteId);
       if (idx === -1) return { success: false, error: 'note not found' };
       Object.assign(notes[idx], JSON.parse(updates), { updatedAt: Date.now() });
-      fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2), 'utf-8');
+      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
       notifyAllReload();
       return { success: true };
     } catch (err: any) { return { success: false, error: err.message }; }
@@ -395,8 +456,32 @@ function setupIPC(): void {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('select-note', noteId);
   });
   ipcMain.handle('get-data-path', () => dataDir);
-  ipcMain.handle('export-data', () => JSON.stringify(store.store, null, 2));
-  ipcMain.on('import-data', (_e: any, d: string) => { try { const p = JSON.parse(d); Object.keys(p).forEach(k => store.set(k, p[k])); } catch {} });
+  ipcMain.handle('export-data', () => {
+    let notes: unknown = [];
+    let timerRecords: unknown = { records: [] };
+    let attachments: unknown = [];
+    try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
+    try { const file = timerRecordsPath(); if (fs.existsSync(file)) timerRecords = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
+    try { const file = attachmentsPath(); if (fs.existsSync(file)) attachments = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
+    return JSON.stringify({ version: 3, exportedAt: Date.now(), preferences: store.store, notes, timerRecords, attachments }, null, 2);
+  });
+  ipcMain.handle('import-data', (_e: any, data: string) => {
+    try {
+      const backup = JSON.parse(data);
+      if (!backup || typeof backup !== 'object') return { success: false, error: 'invalid backup' };
+      const preferences = backup.preferences && typeof backup.preferences === 'object' ? backup.preferences : backup;
+      Object.keys(preferences).forEach((key) => {
+        if (!['version', 'exportedAt', 'notes', 'timerRecords', 'attachments'].includes(key)) store.set(key, preferences[key]);
+      });
+      if (Array.isArray(backup.notes)) fs.writeFileSync(notesPath(), JSON.stringify(backup.notes, null, 2), 'utf-8');
+      if (backup.timerRecords && typeof backup.timerRecords === 'object') fs.writeFileSync(timerRecordsPath(), JSON.stringify(backup.timerRecords, null, 2), 'utf-8');
+      if (Array.isArray(backup.attachments)) fs.writeFileSync(attachmentsPath(), JSON.stringify(backup.attachments, null, 2), 'utf-8');
+      notifyAllReload();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
   // 导出 Word：用 pandoc 将原始 Markdown/LaTeX 编译为 docx
   ipcMain.handle('export-word', async (_e: any, title: string, content: string) => {
     const { dialog } = require('electron');
@@ -505,39 +590,40 @@ function setupIPC(): void {
   });
 
   // 任务计时记录
-  const timerRecordsPath = path.join(dataDir, 'task-timer-records.json');
+  const timerRecordsPath = () => path.join(workspaceStorage.getRoot(), 'task-timer-records.json');
 
   ipcMain.handle('save-timer-record', (_e: any, record: any) => {
     try {
       let data: any = { records: [] };
-      try { if (fs.existsSync(timerRecordsPath)) data = JSON.parse(fs.readFileSync(timerRecordsPath, 'utf-8')); } catch {}
+      try { const file = timerRecordsPath(); if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
       if (!data.records) data.records = [];
       data.records.push(record);
       if (data.records.length > 1000) data.records = data.records.slice(-1000);
-      fs.writeFileSync(timerRecordsPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.writeFileSync(timerRecordsPath(), JSON.stringify(data, null, 2), 'utf-8');
       return { success: true };
     } catch (err: any) { return { success: false, error: err.message }; }
   });
 
   ipcMain.handle('get-timer-records', () => {
-    try { if (fs.existsSync(timerRecordsPath)) return fs.readFileSync(timerRecordsPath, 'utf-8'); } catch {}
+    try { const file = timerRecordsPath(); if (fs.existsSync(file)) return fs.readFileSync(file, 'utf-8'); } catch {}
     return '{"records":[]}';
   });
 
   ipcMain.handle('save-active-session', (_e: any, session: any) => {
     try {
       let data: any = { records: [] };
-      try { if (fs.existsSync(timerRecordsPath)) data = JSON.parse(fs.readFileSync(timerRecordsPath, 'utf-8')); } catch {}
+      try { const file = timerRecordsPath(); if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
       data.activeSession = session || undefined;
-      fs.writeFileSync(timerRecordsPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.writeFileSync(timerRecordsPath(), JSON.stringify(data, null, 2), 'utf-8');
       return { success: true };
     } catch (err: any) { return { success: false, error: err.message }; }
   });
 
   ipcMain.handle('load-active-session', () => {
     try {
-      if (fs.existsSync(timerRecordsPath)) {
-        const data = JSON.parse(fs.readFileSync(timerRecordsPath, 'utf-8'));
+      const file = timerRecordsPath();
+      if (fs.existsSync(file)) {
+        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
         return data.activeSession || null;
       }
     } catch {}
@@ -576,6 +662,8 @@ function createMenu(): void {
 }
 
 app.whenReady().then(() => {
+  workspaceStorage = new WorkspaceStorage(dataDir);
+  dataDir = workspaceStorage.getRoot();
   createMenu();
   createWelcomeNote();
   setupIPC();

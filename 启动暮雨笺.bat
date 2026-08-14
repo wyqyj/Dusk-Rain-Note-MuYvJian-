@@ -1,7 +1,8 @@
 @echo off
+setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 cd /d "%~dp0"
-title 暮雨笺 - 构建启动
+title 暮雨笺 v3.0.0 - 本地启动
 
 :: 检查 Node.js 是否可用（优先使用系统 PATH）
 where node >nul 2>nul
@@ -26,14 +27,6 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 关闭已运行的暮雨笺进程
-taskkill /F /IM electron.exe >nul 2>nul
-timeout /t 1 /nobreak >nul
-
-:: 重置欢迎便签（测试用，确保每次启动都能看到欢迎便签）
-if exist "dist\data\notes.json" del /f /q "dist\data\notes.json"
-if exist "dist\data\config.json" del /f /q "dist\data\config.json"
-
 echo [1/2] 正在构建...
 call npm run build
 if %errorlevel% neq 0 (
@@ -46,4 +39,5 @@ if %errorlevel% neq 0 (
 echo.
 echo [2/2] 正在启动暮雨笺...
 echo.
-npx electron .
+call npx electron .
+endlocal

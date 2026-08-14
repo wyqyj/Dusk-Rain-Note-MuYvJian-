@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 便签数据
   getNotes: () => ipcRenderer.invoke('get-notes'),
   saveNotes: (notes: string) => ipcRenderer.invoke('save-notes', notes),
+  getAttachments: () => ipcRenderer.invoke('get-attachments'),
+  saveAttachments: (attachments: string) => ipcRenderer.invoke('save-attachments', attachments),
   createQuickNote: (noteJson: string) => ipcRenderer.invoke('create-quick-note', noteJson),
   updateQuickNoteContent: (noteId: string, content: string) => ipcRenderer.invoke('update-quick-note-content', noteId, content),
   updateQuickNote: (noteId: string, updates: string) => ipcRenderer.invoke('update-quick-note', noteId, updates),
@@ -41,7 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onImportData: (callback: () => void) => ipcRenderer.on('import-data', callback),
   // 数据导入导出
   exportData: () => ipcRenderer.invoke('export-data'),
-  importData: (data: string) => ipcRenderer.send('import-data', data),
+  importData: (data: string) => ipcRenderer.invoke('import-data', data),
   // 导出为 Word（通过 pandoc 编译原始内容）
   exportWord: (title: string, content: string) => ipcRenderer.invoke('export-word', title, content),
   // 导出为 PDF（通过 pandoc + xelatex，需要用户已安装 LaTeX）
@@ -62,4 +64,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleTimerStatsWindow: () => ipcRenderer.send('toggle-timer-stats-window'),
   closeTimerStatsWindow: () => ipcRenderer.send('close-timer-stats-window'),
   minimizeTimerStatsWindow: () => ipcRenderer.send('minimize-timer-stats-window'),
+  // 学习工作台（文件系统能力经主进程收口）
+  getWorkspaceState: () => ipcRenderer.invoke('workspace-get-state'),
+  saveWorkspaceState: (state: string) => ipcRenderer.invoke('workspace-save-state', state),
+  getWorkspaceRoot: () => ipcRenderer.invoke('workspace-get-root'),
+  chooseWorkspaceRoot: () => ipcRenderer.invoke('workspace-choose-root'),
+  migrateWorkspace: (destination: string) => ipcRenderer.invoke('workspace-migrate', destination),
+  backupWorkspace: () => ipcRenderer.invoke('workspace-backup'),
+  restoreWorkspace: () => ipcRenderer.invoke('workspace-restore'),
+  chooseQuestionBook: () => ipcRenderer.invoke('workspace-choose-question-book'),
+  readQuestionBook: (folder: string) => ipcRenderer.invoke('workspace-read-question-book', folder),
+  chooseBook: () => ipcRenderer.invoke('workspace-choose-book'),
+  openWorkspacePath: (target: string) => ipcRenderer.invoke('workspace-open-path', target),
+  openWorkspaceExamples: () => ipcRenderer.invoke('workspace-open-examples'),
+  getQuestionBookSkill: () => ipcRenderer.invoke('workspace-question-book-skill'),
+  notifyWorkspace: (title: string, body: string) => ipcRenderer.invoke('workspace-notify', title, body),
 });

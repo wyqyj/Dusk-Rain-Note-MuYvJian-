@@ -1,0 +1,4 @@
+interface:
+  display_name: "暮雨笺题册整理"
+  short_description: "将题目资料编写为可导入暮雨笺的规范题册 Markdown 文档"
+  default_prompt: "Use $muyujian-question-book-import to prepare this material as a valid MuYuJian question book."

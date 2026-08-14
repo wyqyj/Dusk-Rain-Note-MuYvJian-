@@ -1,10 +1,15 @@
 node_modules/
 dist/
 release/
+release-temp/
 data/
 .claude/
 .mimocode/
 *.log
+*.tmp
+*.muyujian-workspace
+.env
+.env.*
 .DS_Store
 Thumbs.db
 resources/pandoc/

@@ -1,6 +1,45 @@
 import { create } from 'zustand';
 
-export type NoteType = 'note' | 'todo';
+export type NoteType = 'note' | 'todo' | 'canvas';
+
+export type CanvasItemType = 'text' | 'image' | 'note';
+
+export interface CanvasItem {
+  id: string;
+  type: CanvasItemType;
+  x: number;
+  y: number;
+  width: number;
+  height?: number;
+  content: string;
+  color?: string;
+  attachmentId?: string;
+}
+
+export interface CanvasLink {
+  id: string;
+  fromId: string;
+  toId: string;
+  label?: string;
+  color?: string;
+}
+
+export interface CanvasOutlineItem {
+  label: string;
+  itemId: string;
+}
+
+export interface NoteVersion {
+  id: string;
+  savedAt: number;
+  title: string;
+  content: string;
+  canvasItems?: CanvasItem[];
+  canvasLinks?: CanvasLink[];
+  canvasWallpaper?: string;
+  canvasWallpaperFit?: 'cover' | 'contain' | 'repeat';
+  canvasOutline?: CanvasOutlineItem[];
+}
 
 export interface Note {
   id: string;
@@ -17,6 +56,13 @@ export interface Note {
   pinnedInTags?: string[];
   isDeleted?: boolean;
   deletedAt?: number;
+  canvasItems?: CanvasItem[];
+  canvasLinks?: CanvasLink[];
+  canvasWallpaper?: string;
+  canvasWallpaperFit?: 'cover' | 'contain' | 'repeat';
+  canvasOutline?: CanvasOutlineItem[];
+  kanbanStatus?: 'todo' | 'doing' | 'done';
+  history?: NoteVersion[];
 }
 
 interface NoteStore {
@@ -40,11 +86,31 @@ interface NoteStore {
   getTodoNotes: () => Note[];
   getTodayPlanNotes: () => Note[];
   selectNote: (id: string) => void;
+  restoreVersion: (id: string, versionId: string) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSavedJson = '';
 let reloading = false;
+const historyTimestamps = new Map<string, number>();
+
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function createVersion(note: Note): NoteVersion {
+  return {
+    id: `${note.id}-${Date.now().toString(36)}`,
+    savedAt: Date.now(),
+    title: note.title,
+    content: note.content,
+    canvasItems: note.canvasItems ? cloneValue(note.canvasItems) : undefined,
+    canvasLinks: note.canvasLinks ? cloneValue(note.canvasLinks) : undefined,
+    canvasWallpaper: note.canvasWallpaper,
+    canvasWallpaperFit: note.canvasWallpaperFit,
+    canvasOutline: note.canvasOutline ? cloneValue(note.canvasOutline) : undefined,
+  };
+}
 function saveToDisk(notes: Note[]): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -64,7 +130,24 @@ export function validateNotes(data: any[]): Note[] {
   if (!Array.isArray(data)) return [];
   return data.filter((n): n is Note =>
     n && typeof n.id === 'string' && typeof n.title === 'string' && typeof n.content === 'string'
-  );
+  ).map((note) => ({
+    ...note,
+    noteType: note.noteType === 'canvas' || note.noteType === 'todo' ? note.noteType : 'note',
+    canvasItems: Array.isArray(note.canvasItems) ? note.canvasItems.filter((item: any) =>
+      item && typeof item.id === 'string' && (item.type === 'text' || item.type === 'image' || item.type === 'note') &&
+      Number.isFinite(item.x) && Number.isFinite(item.y) && typeof item.content === 'string'
+    ).map((item: CanvasItem) => ({ ...item, width: Number.isFinite(item.width) ? item.width : item.type === 'image' ? 320 : 260, height: Number.isFinite(item.height) ? item.height : undefined })) : undefined,
+    canvasLinks: Array.isArray(note.canvasLinks) ? note.canvasLinks.filter((link: any) =>
+      link && typeof link.id === 'string' && typeof link.fromId === 'string' && typeof link.toId === 'string'
+    ) : undefined,
+    canvasWallpaper: typeof note.canvasWallpaper === 'string' && note.canvasWallpaper.startsWith('data:image/') ? note.canvasWallpaper : undefined,
+    canvasWallpaperFit: note.canvasWallpaperFit === 'contain' || note.canvasWallpaperFit === 'repeat' ? note.canvasWallpaperFit : 'cover',
+    canvasOutline: Array.isArray(note.canvasOutline) ? note.canvasOutline.filter((item: any) => item && typeof item.label === 'string' && typeof item.itemId === 'string') : undefined,
+    kanbanStatus: note.kanbanStatus === 'doing' || note.kanbanStatus === 'done' ? note.kanbanStatus : 'todo',
+    history: Array.isArray(note.history) ? note.history.filter((version: any) =>
+      version && typeof version.id === 'string' && Number.isFinite(version.savedAt) && typeof version.title === 'string' && typeof version.content === 'string'
+    ).slice(-20) : [],
+  }));
 }
 
 export const useNoteStore = create<NoteStore>((set, get) => ({
@@ -128,7 +211,16 @@ export const useNoteStore = create<NoteStore>((set, get) => ({
   },
 
   updateNote: (id, updates) => {
-    const updated = get().notes.map((n) => n.id === id ? { ...n, ...updates, updatedAt: Date.now() } : n);
+    const shouldSnapshot = !('history' in updates) && ['title', 'content', 'canvasItems', 'canvasLinks', 'canvasWallpaper', 'canvasWallpaperFit', 'canvasOutline', 'kanbanStatus'].some((key) => key in updates);
+    const updated = get().notes.map((n) => {
+      if (n.id !== id) return n;
+      const lastSnapshot = historyTimestamps.get(id) || 0;
+      const history = shouldSnapshot && Date.now() - lastSnapshot > 10000
+        ? [...(n.history || []), createVersion(n)].slice(-20)
+        : n.history;
+      if (shouldSnapshot && history !== n.history) historyTimestamps.set(id, Date.now());
+      return { ...n, ...updates, history, updatedAt: Date.now() };
+    });
     set({ notes: updated });
     saveToDisk(updated);
   },
@@ -185,6 +277,20 @@ export const useNoteStore = create<NoteStore>((set, get) => ({
   selectNote: (id) => {
     const exists = get().notes.some((n) => n.id === id);
     if (exists) set({ activeNoteId: id });
+  },
+
+  restoreVersion: (id, versionId) => {
+    const note = get().notes.find((entry) => entry.id === id);
+    const version = note?.history?.find((entry) => entry.id === versionId);
+    if (!note || !version) return;
+    get().updateNote(id, {
+      title: version.title,
+      content: version.content,
+      canvasItems: version.canvasItems ? cloneValue(version.canvasItems) : [],
+      canvasLinks: version.canvasLinks ? cloneValue(version.canvasLinks) : [],
+      canvasWallpaper: version.canvasWallpaper,
+      canvasWallpaperFit: version.canvasWallpaperFit,
+    });
   },
 }));
 

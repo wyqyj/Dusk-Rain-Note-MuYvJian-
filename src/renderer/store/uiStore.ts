@@ -5,6 +5,8 @@ interface UIStore {
   filterTag: string | null;
   filterTags: string[];
   showTodayPlan: boolean;
+  showKanban: boolean;
+  showWorkbench: boolean;
   sortBy: 'updatedAt' | 'createdAt' | 'title' | 'deadline';
   sortDirection: 'asc' | 'desc';
   setSearchQuery: (query: string) => void;
@@ -13,6 +15,8 @@ interface UIStore {
   toggleFilterTag: (tag: string) => void;
   clearFilterTags: () => void;
   setShowTodayPlan: (show: boolean) => void;
+  setShowKanban: (show: boolean) => void;
+  setShowWorkbench: (show: boolean) => void;
   setSortBy: (by: 'updatedAt' | 'createdAt' | 'title' | 'deadline') => void;
   setSortDirection: (dir: 'asc' | 'desc') => void;
 }
@@ -22,6 +26,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   filterTag: null,
   filterTags: [],
   showTodayPlan: false,
+  showKanban: false,
+  showWorkbench: true,
   sortBy: 'updatedAt',
   sortDirection: 'desc',
   setSearchQuery: (query) => set({ searchQuery: query }),
@@ -36,6 +42,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   },
   clearFilterTags: () => set({ filterTags: [], filterTag: null }),
   setShowTodayPlan: (show) => set({ showTodayPlan: show }),
+  setShowKanban: (show) => set({ showKanban: show }),
+  setShowWorkbench: (show) => set({ showWorkbench: show }),
   setSortBy: (sortBy) => set({ sortBy }),
   setSortDirection: (sortDirection) => set({ sortDirection }),
 }));

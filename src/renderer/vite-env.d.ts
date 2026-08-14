@@ -20,6 +20,8 @@ interface ElectronAPI {
   getOpacity: () => Promise<number>;
   getNotes: () => Promise<string>;
   saveNotes: (notes: string) => Promise<{ success: boolean }>;
+  getAttachments: () => Promise<string>;
+  saveAttachments: (attachments: string) => Promise<{ success: boolean }>;
   createQuickNote: (noteJson: string) => Promise<{ success: boolean; noteId?: string; error?: string }>;
   updateQuickNoteContent: (noteId: string, content: string) => Promise<{ success: boolean; error?: string }>;
   updateQuickNote: (noteId: string, updates: string) => Promise<{ success: boolean; error?: string }>;
@@ -30,16 +32,38 @@ interface ElectronAPI {
   onExportData: (callback: () => void) => void;
   onImportData: (callback: () => void) => void;
   exportData: () => Promise<string>;
-  importData: (data: string) => void;
+  importData: (data: string) => Promise<{ success: boolean; error?: string }>;
   exportWord: (title: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
   exportPdf: (title: string, content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
   pandocCompile: (source: string, fromFormat?: string) => Promise<{ success: boolean; html?: string; error?: string }>;
   reloadNotesFromDisk: () => void;
   selectNote: (noteId: string) => void;
   onSelectNote: (callback: (noteId: string) => void) => void;
+  saveTimerRecord: (record: unknown) => Promise<{ success: boolean; error?: string }>;
+  getTimerRecords: () => Promise<string>;
+  saveActiveSession: (session: unknown) => Promise<{ success: boolean; error?: string }>;
+  loadActiveSession: () => Promise<unknown>;
+  toggleTimerStatsWindow: () => void;
+  closeTimerStatsWindow: () => void;
+  minimizeTimerStatsWindow: () => void;
+  getWorkspaceState: () => Promise<string>;
+  saveWorkspaceState: (state: string) => Promise<{ success: boolean; error?: string }>;
+  getWorkspaceRoot: () => Promise<string>;
+  chooseWorkspaceRoot: () => Promise<{ canceled?: boolean; path?: string }>;
+  migrateWorkspace: (destination: string) => Promise<{ success: boolean; error?: string; source?: string; destination?: string; files?: number }>;
+  backupWorkspace: () => Promise<{ success: boolean; path?: string; error?: string }>;
+  restoreWorkspace: () => Promise<{ success: boolean; error?: string; files?: number }>;
+  chooseQuestionBook: () => Promise<{ canceled?: boolean; folder?: string; originalFolder?: string; content?: string }>;
+  readQuestionBook: (folder: string) => Promise<{ success: boolean; folder?: string; content?: string; error?: string }>;
+  chooseBook: () => Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string }>;
+  openWorkspacePath: (target: string) => Promise<string>;
+  openWorkspaceExamples: () => Promise<{ success: boolean; path?: string; error?: string }>;
+  getQuestionBookSkill: () => Promise<{ success: boolean; directory?: string; skillPath?: string; promptPath?: string; prompt?: string; error?: string }>;
+  notifyWorkspace: (title: string, body: string) => Promise<boolean>;
 }
 
 interface Window {
   electronAPI?: ElectronAPI;
+  __muyujianPendingCanvasId?: string;
   MathJax?: { typesetPromise?: (elements?: Element[]) => Promise<void> };
 }

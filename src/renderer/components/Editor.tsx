@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from '@codemirror/view';
 import { EditorState, SelectionRange } from '@codemirror/state';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
@@ -8,6 +8,7 @@ import { languages } from '@codemirror/language-data';
 import { useNoteStore } from '../store/noteStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useAutoSave } from '../utils/useAutoSave';
+import { VersionHistory } from './VersionHistory';
 
 /** 将文件转为 base64 data URL */
 function fileToBase64(file: File): Promise<string> {
@@ -33,10 +34,14 @@ export const Editor: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { notes, activeNoteId, updateNote, updateContent } = useNoteStore();
+  const { notes, activeNoteId, updateNote, updateContent, setActiveNoteId } = useNoteStore();
   const { t } = useSettingsStore();
+  const [showHistory, setShowHistory] = useState(false);
 
   const activeNote = notes.find((n) => n.id === activeNoteId);
+  const backlinks = useMemo(() => activeNote ? notes.filter((note) => note.id !== activeNote.id && !note.isDeleted && (
+    note.content.includes(`[[${activeNote.title}]]`) || note.canvasItems?.some((item) => item.type === 'note' && item.content === activeNote.id)
+  )) : [], [activeNote, notes]);
 
   useAutoSave({
     content: activeNote?.content || '',
@@ -220,21 +225,27 @@ export const Editor: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-white dark:bg-gray-900 min-w-0">
+    <div className="editor-shell flex-1 flex flex-col bg-white dark:bg-gray-900 min-w-0">
       {/* 标题 */}
-      <div className="px-5 py-3 border-b border-rose-100/60 dark:border-gray-800">
+      <div className="editor-note-header px-5 py-3 border-b border-rose-100/60 dark:border-gray-800">
+        <div className="flex items-center gap-3">
         <input type="text" value={activeNote.title} onChange={handleTitleChange}
           className="w-full text-xl font-semibold bg-transparent border-none outline-none text-gray-800 dark:text-gray-100 placeholder:text-gray-300 tracking-wide"
           placeholder={t.titlePlaceholder} />
+          <button onClick={() => setShowHistory(true)} className="p-1.5 rounded-md text-gray-400 hover:bg-indigo-50 hover:text-indigo-500 dark:hover:bg-gray-800 dark:hover:text-indigo-300" title="版本历史" aria-label="版本历史">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}><path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 109-9 9 9 0 00-9 9zm9-5v5l3 2" /></svg>
+          </button>
+        </div>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-gray-300 dark:text-gray-600">
           <span>{t.createdAt} {new Date(activeNote.createdAt).toLocaleString('zh-CN')}</span>
           <span className="text-rose-200">·</span>
           <span>{t.updatedAt} {new Date(activeNote.updatedAt).toLocaleString('zh-CN')}</span>
         </div>
+        {backlinks.length > 0 && <div className="flex items-center gap-1.5 mt-2 overflow-x-auto text-[11px]"><span className="text-gray-400 flex-shrink-0">被引用</span>{backlinks.map((note) => <button key={note.id} onClick={() => setActiveNoteId(note.id)} className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-500 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 whitespace-nowrap">{note.noteType === 'canvas' ? '▦ ' : ''}{note.title}</button>)}</div>}
       </div>
 
       {/* 工具栏 */}
-      <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-rose-100/30 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
+      <div className="editor-toolbar flex items-center gap-0.5 px-3 py-1.5 border-b border-rose-100/30 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
         <button onClick={handleHeading} className="toolbar-btn" title="标题"><span className="font-bold text-sm">H</span></button>
         <button onClick={handleBold} className="toolbar-btn" title={t.bold}><span className="font-bold text-sm">B</span></button>
         <button onClick={handleItalic} className="toolbar-btn" title={t.italic}><span className="italic text-sm">I</span></button>
@@ -257,9 +268,10 @@ export const Editor: React.FC = () => {
       </div>
 
       {/* 编辑器（支持拖拽图片） */}
-      <div ref={editorRef} className="flex-1 overflow-hidden"
+      <div ref={editorRef} className="editor-surface flex-1 overflow-hidden"
         onDrop={handleDrop} onDragOver={handleDragOver}
         onMouseDown={() => { viewRef.current?.focus(); }} />
+      {showHistory && <VersionHistory note={activeNote} onClose={() => setShowHistory(false)} />}
     </div>
   );
 };

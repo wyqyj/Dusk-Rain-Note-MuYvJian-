@@ -26,7 +26,7 @@ function wrapLatexFragment(text: string): string {
   return `\\documentclass[12pt]{article}\n\\usepackage{amsmath,amssymb}\n\\begin{document}\n${text}\n\\end{document}`;
 }
 
-export const Preview: React.FC = () => {
+export const Preview: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const { notes, activeNoteId, updateNote } = useNoteStore();
   const { t } = useSettingsStore();
   const activeNote = notes.find((n) => n.id === activeNoteId);
@@ -159,14 +159,17 @@ export const Preview: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-50/50 dark:bg-gray-800/30 min-w-0 border-l border-indigo-100/60 dark:border-gray-800">
+    <div className="preview-shell flex-1 flex flex-col bg-gray-50/50 dark:bg-gray-800/30 min-w-0 border-l border-indigo-100/60 dark:border-gray-800">
       {/* 标题栏 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-indigo-100/40 dark:border-gray-800">
+      <div className="preview-header flex items-center justify-between px-4 py-2 border-b border-indigo-100/40 dark:border-gray-800">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-indigo-300 dark:text-gray-600 tracking-wider">{t.preview}</span>
           {compiling && <span className="text-[10px] text-amber-500 animate-pulse">Pandoc 编译中…</span>}
         </div>
         <div className="flex items-center gap-1">
+          {onClose && <button onClick={onClose}
+            className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-200 transition-colors"
+            title="关闭预览" aria-label="关闭预览">×</button>}
           {/* 源码格式选择 */}
           <select value={sourceFormat} onChange={(e) => setSourceFormat(e.target.value as SourceFormat)}
             className="text-[10px] px-1.5 py-1 rounded bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 outline-none cursor-pointer">
@@ -192,7 +195,7 @@ export const Preview: React.FC = () => {
       </div>
       {/* 预览内容 */}
       <div ref={contentRef}
-        className="flex-1 overflow-auto p-6 prose prose-sm dark:prose-invert max-w-none break-words prose-headings:text-gray-800 dark:prose-headings:text-gray-100 prose-p:text-gray-600 dark:prose-p:text-gray-300 prose-a:text-indigo-500 prose-code:text-indigo-600 dark:prose-code:text-indigo-400 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800/80"
+        className="preview-content flex-1 overflow-auto p-6 prose prose-sm dark:prose-invert max-w-none break-words prose-headings:text-gray-800 dark:prose-headings:text-gray-100 prose-p:text-gray-600 dark:prose-p:text-gray-300 prose-a:text-indigo-500 prose-code:text-indigo-600 dark:prose-code:text-indigo-400 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800/80"
         onClick={handleContentClick} dangerouslySetInnerHTML={{ __html: html }} />
       <style>{`
         .wiki-link { color: #6366f1; text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 2px; cursor: pointer; transition: color 0.15s; }

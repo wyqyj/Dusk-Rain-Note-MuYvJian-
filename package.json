@@ -1,7 +1,15 @@
 {
   "name": "muyujian",
-  "version": "2.0.0",
-  "description": "MuYuJian - Note taking app with Markdown and LaTeX support",
+  "version": "3.0.0",
+  "description": "暮雨笺：本地优先的笔记与考研学习工作台",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wyqyj/Dusk-Rain-Note-MuYvJian-.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wyqyj/Dusk-Rain-Note-MuYvJian-/issues"
+  },
+  "homepage": "https://github.com/wyqyj/Dusk-Rain-Note-MuYvJian-#readme",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
@@ -57,6 +65,8 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "electronDist": "node_modules/electron/dist",
     "files": [
       "dist/**/*",
       "package.json"
@@ -68,10 +78,25 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "examples/workbench/",
+        "to": "examples/workbench/",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "skills/muyujian-question-book-import/",
+        "to": "skills/muyujian-question-book-import/",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

@@ -1,0 +1,13 @@
+{
+  "id": "canvas-example-1",
+  "title": "本周学习复盘",
+  "noteType": "canvas",
+  "canvasItems": [
+    { "id": "canvas-item-1", "type": "text", "x": 100, "y": 100, "width": 260, "content": "本周完成\n数学极限与导数第一轮复盘", "color": "#1e293b" },
+    { "id": "canvas-item-2", "type": "text", "x": 430, "y": 100, "width": 260, "content": "待重做\n链式法则、定积分上下限", "color": "#b91c1c" },
+    { "id": "canvas-item-3", "type": "note", "x": 430, "y": 280, "width": 280, "content": "note-example-1" }
+  ],
+  "canvasLinks": [
+    { "id": "canvas-link-1", "fromId": "canvas-item-1", "toId": "canvas-item-2", "label": "复盘后处理", "color": "#2563eb" }
+  ]
+}

@@ -1,0 +1,325 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CanvasBoard } from './CanvasBoard';
+import { Editor } from './Editor';
+import { Preview } from './Preview';
+import { CanvasItem, Note, useNoteStore } from '../store/noteStore';
+import { generateId } from '../utils/markdown';
+import { useSettingsStore } from '../store/settingsStore';
+
+type Subject = '政治' | '英语' | '数学' | '业务课';
+type TaskBucket = 'daily' | 'monthly' | 'backlog' | 'ignored';
+type Mastery = 1 | 2 | 3 | 4 | 5;
+
+type Task = { id: string; title: string; subject: Subject; date: string; completed: boolean; bucket: TaskBucket; sourceDate?: string; due?: string };
+type FocusRecord = { id: string; taskName: string; subject: Subject; date: string; minutes: number; completed: boolean };
+type Book = { id: string; title: string; author: string; shelf: string; sourcePath?: string; originalPath?: string; progress: number; lastOpenedAt?: number; noteIds: string[]; questionBookIds: string[] };
+type Question = { id: string; chapter: string; number: string; status: 'correct' | 'wrong'; prompt: string; answer: string; mine?: string; reason?: string; mastery: Mastery; passed: boolean; tags: string[] };
+type QuestionBook = { id: string; title: string; volume: string; subject: Subject; sourcePath?: string; originalPath?: string; canvasId?: string; questions: Question[]; overrides: Record<string, Pick<Question, 'mastery' | 'passed' | 'tags'>> };
+type Workspace = { version: 3; examDate: string; phases: { name: string; start: string; end: string }[]; tasks: Task[]; focusRecords: FocusRecord[]; shelves: string[]; books: Book[]; questionBooks: QuestionBook[]; checkins: string[]; customTags: string[] };
+
+const subjects: Subject[] = ['政治', '英语', '数学', '业务课'];
+const today = () => new Date().toISOString().slice(0, 10);
+const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const dateOffset = (offset: number) => { const date = new Date(); date.setDate(date.getDate() + offset); return date.toISOString().slice(0, 10); };
+
+const sampleQuestions: Question[] = [
+  { id: 'q-001', chapter: '第一章 极限', number: 'Q001', status: 'wrong', prompt: '求 lim(x→0) sin x / x。', answer: '1', mine: '0', reason: '忽略了重要极限。', mastery: 2, passed: false, tags: ['易错', '基础'] },
+  { id: 'q-002', chapter: '第一章 极限', number: 'Q002', status: 'correct', prompt: '判断函数 f(x)=x² 在 x=0 处的连续性。', answer: '连续。', mastery: 4, passed: true, tags: ['连续'] },
+  { id: 'q-003', chapter: '第二章 导数', number: 'Q003', status: 'wrong', prompt: '求 y=ln(x²+1) 的导数。', answer: 'y\' = 2x/(x²+1)', mine: '1/(x²+1)', reason: '遗漏链式法则中的 2x。', mastery: 1, passed: false, tags: ['链式法则'] },
+  { id: 'q-004', chapter: '第二章 导数', number: 'Q004', status: 'correct', prompt: '求 y=e^x 的二阶导数。', answer: 'y\'\'=e^x', mastery: 5, passed: true, tags: ['基础'] },
+  { id: 'q-005', chapter: '第三章 积分', number: 'Q005', status: 'wrong', prompt: '计算 ∫₀¹ x dx。', answer: '1/2', mine: '1', reason: '定积分上下限代入错误。', mastery: 2, passed: false, tags: ['定积分'] },
+];
+
+const initialWorkspace = (): Workspace => ({
+  version: 3,
+  examDate: '2026-12-21',
+  phases: [{ name: '一轮', start: '2026-01-01', end: '2026-06-30' }, { name: '二轮', start: '2026-07-01', end: '2026-09-30' }, { name: '冲刺', start: '2026-10-01', end: '2026-12-21' }],
+  tasks: [
+    { id: 'task-1', title: '整理高等数学第一章错题', subject: '数学', date: today(), completed: false, bucket: 'daily' },
+    { id: 'task-2', title: '英语阅读精练 2 篇', subject: '英语', date: today(), completed: false, bucket: 'daily' },
+    { id: 'task-3', title: '政治马原知识框架复盘', subject: '政治', date: today(), completed: false, bucket: 'daily' },
+    { id: 'task-4', title: '完成专业课章节笔记', subject: '业务课', date: dateOffset(-1), completed: false, bucket: 'daily', due: dateOffset(-1) },
+  ],
+  focusRecords: [], shelves: ['数学', '英语', '政治', '业务课'], books: [],
+  questionBooks: [{ id: 'sample-zhu', title: '张宇一千题基础题', volume: '第一册', subject: '数学', questions: sampleQuestions, overrides: {} }],
+  checkins: [dateOffset(-1), dateOffset(-2), dateOffset(-4), dateOffset(-5), dateOffset(-8), dateOffset(-11), dateOffset(-14), dateOffset(-18)], customTags: ['易错', '基础', '链式法则', '定积分'],
+});
+
+function normalizeWorkspace(value: unknown): Workspace {
+  const base = initialWorkspace();
+  if (!value || typeof value !== 'object') return base;
+  const raw = value as Partial<Workspace>;
+  return { ...base, ...raw, phases: raw.phases?.length ? raw.phases : base.phases, tasks: Array.isArray(raw.tasks) ? raw.tasks : base.tasks, focusRecords: Array.isArray(raw.focusRecords) ? raw.focusRecords : [], shelves: raw.shelves?.length ? raw.shelves : base.shelves, books: Array.isArray(raw.books) ? raw.books : [], questionBooks: Array.isArray(raw.questionBooks) ? raw.questionBooks : base.questionBooks, checkins: Array.isArray(raw.checkins) ? raw.checkins : base.checkins, customTags: Array.isArray(raw.customTags) ? raw.customTags : base.customTags };
+}
+
+function parseQuestionBook(markdown: string, sourcePath?: string): QuestionBook {
+  const frontMatter = markdown.match(/^---\s*\n([\s\S]*?)\n---/);
+  const field = (name: string) => frontMatter?.[1].match(new RegExp(`^${name}:\\s*(.+)$`, 'm'))?.[1].trim() || '';
+  if (field('format') !== 'muyujian-question-book/v1') throw new Error('题册格式不匹配：缺少 format: muyujian-question-book/v1');
+  const subject = subjects.includes(field('subject') as Subject) ? field('subject') as Subject : '业务课';
+  const body = markdown.slice(frontMatter ? frontMatter[0].length : 0);
+  let currentChapter = '未分章';
+  const questionBlocks = body.split(/^##\s+(?=Q\d+)/m).filter(Boolean);
+  const questions = questionBlocks.map((block, index): Question | null => {
+    const heading = block.match(/^(Q\d+)/m)?.[1];
+    if (!heading) {
+      const chapter = block.match(/^#\s+(.+)$/m)?.[1];
+      if (chapter) currentChapter = chapter.trim();
+      return null;
+    }
+    const before = body.slice(0, body.indexOf(block));
+    const chapters = [...before.matchAll(/^#\s+(.+)$/gm)];
+    currentChapter = chapters.length ? chapters[chapters.length - 1][1].trim() : currentChapter;
+    const section = (name: string) => block.match(new RegExp(`###\\s+${name}\\s*\\n([\\s\\S]*?)(?=\\n###\\s+|$)`))?.[1].trim() || '';
+    const status = /状态:\s*correct/.test(block) ? 'correct' : 'wrong';
+    const tagLine = block.match(/^标签:\s*(.+)$/m)?.[1] || '';
+    return { id: uid('question'), chapter: currentChapter, number: heading, status, prompt: section('题干'), answer: section('标准答案'), mine: section('我的答案') || undefined, reason: section('错误原因') || undefined, mastery: status === 'wrong' ? 1 : 4, passed: status === 'correct', tags: tagLine.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) };
+  }).filter((question): question is Question => !!question);
+  if (!questions.length) throw new Error('题册中没有可识别的 ## Q001 格式题目');
+  return { id: uid('book'), title: field('book') || '未命名题册', volume: field('volume') || '第一册', subject, sourcePath, questions, overrides: {} };
+}
+
+function buildQuestionCanvas(book: QuestionBook): Pick<Note, 'canvasItems' | 'canvasOutline'> {
+  const items: CanvasItem[] = [];
+  const outline: NonNullable<Note['canvasOutline']> = [];
+  const groups = [...new Set(book.questions.map((question) => question.chapter))].map((chapter) => ({ chapter, questions: book.questions.filter((question) => question.chapter === chapter) }));
+  items.push({ id: `question-book-${book.id}-title`, type: 'text', x: 280, y: 60, width: 760, height: 92, color: '#1e3a8a', content: `${book.title} · ${book.volume}\n${book.subject} · ${book.questions.length} 道题 · 自动同步自题册 Markdown` });
+  let y = 180;
+  groups.forEach(({ chapter, questions }, chapterIndex) => {
+    const chapterId = `question-book-${book.id}-chapter-${chapterIndex}`;
+    items.push({ id: chapterId, type: 'text', x: 280, y, width: 760, height: 70, color: '#2563eb', content: `# ${chapter}\n${questions.length} 道题` });
+    outline.push({ label: chapter, itemId: chapterId });
+    y += 96;
+    let rowHeight = 0;
+    questions.forEach((question, index) => {
+      const column = index % 2;
+      if (column === 0 && index > 0) y += rowHeight + 26;
+      const status = question.status === 'wrong' ? `错误题${question.passed ? ' · 已通过' : ' · 待复盘'}` : '正确题';
+      const content = `${question.number} · ${status}\n\n题干\n${question.prompt || '未提供题干'}\n\n标准答案\n${question.answer || '未提供标准答案'}${question.mine ? `\n\n我的答案\n${question.mine}` : ''}${question.reason ? `\n\n错误原因\n${question.reason}` : ''}${question.tags.length ? `\n\n标签：${question.tags.join('、')}` : ''}`;
+      const height = Math.min(680, Math.max(260, 144 + Math.ceil(content.length / 34) * 21));
+      rowHeight = Math.max(rowHeight, height);
+      items.push({ id: `question-book-${book.id}-question-${question.id}`, type: 'text', x: 280 + column * 420, y, width: 390, height, color: question.status === 'wrong' ? '#991b1b' : '#166534', content });
+    });
+    y += rowHeight + 42;
+  });
+  return { canvasItems: items, canvasOutline: outline };
+}
+
+function formatDuration(minutes: number): string { return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`; }
+function remaining(examDate: string) { const ms = new Date(`${examDate}T00:00:00`).getTime() - Date.now(); return Math.max(0, Math.floor(ms / 86400000)); }
+
+const WorkspaceWallpaperSettings: React.FC = () => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { settings, updateSettings } = useSettingsStore();
+  const selectWallpaper = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('请选择图片文件。'); return; }
+    if (file.size > 8 * 1024 * 1024) { alert('壁纸图片不能超过 8MB。'); return; }
+    const reader = new FileReader();
+    reader.onload = () => updateSettings({ wallpaper: typeof reader.result === 'string' ? reader.result : undefined });
+    reader.onerror = () => alert('壁纸读取失败，请换一张图片后重试。');
+    reader.readAsDataURL(file);
+  };
+  return <section className="panel"><h2>工作台壁纸</h2><p className="muted">上传本地图片作为整个学习工作台的统一背景，图片仅保存于本机设置中。</p><div className="inline-actions"><button onClick={() => inputRef.current?.click()}>上传壁纸</button>{settings.wallpaper && <button onClick={() => updateSettings({ wallpaper: undefined })}>清除壁纸</button>}</div><input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={(event) => { selectWallpaper(event.target.files?.[0]); event.currentTarget.value = ''; }} />{settings.wallpaper && <div className="workspace-wallpaper-preview" style={{ backgroundImage: `url(${settings.wallpaper})` }} aria-label="当前工作台壁纸预览" />}</section>;
+};
+
+const BookEditorPopover: React.FC<{ book: Book; shelves: string[]; position: { left: number; top: number }; pendingDelete: boolean; onClose: () => void; onUpdate: (changes: Partial<Book>) => void; onDelete: () => void; onRequestDelete: () => void }> = ({ book, shelves, position, pendingDelete, onClose, onUpdate, onDelete, onRequestDelete }) => createPortal(<section className="book-editor-popover" role="dialog" aria-label={`编辑书本 ${book.title}`} style={position} onClick={(event) => event.stopPropagation()}><header><b>编辑书本</b><button onClick={onClose} title="关闭编辑" aria-label="关闭编辑">×</button></header><label>书名<input value={book.title} onChange={(event) => onUpdate({ title: event.target.value })} placeholder="书名" /></label><label>作者或来源<input value={book.author} onChange={(event) => onUpdate({ author: event.target.value })} placeholder="可选" /></label><label>书架<select value={book.shelf} onChange={(event) => onUpdate({ shelf: event.target.value })}>{shelves.map((targetShelf) => <option key={targetShelf}>{targetShelf}</option>)}</select></label><label>本地文件路径<input value={book.sourcePath || ''} onChange={(event) => onUpdate({ sourcePath: event.target.value || undefined })} placeholder="可选" /></label><footer>{book.sourcePath && <button onClick={() => { window.electronAPI?.openWorkspacePath(book.sourcePath!); onUpdate({ lastOpenedAt: Date.now() }); }}>系统打开</button>}<button className="danger" onClick={pendingDelete ? onDelete : onRequestDelete}>{pendingDelete ? '确认移除' : '移除书本'}</button></footer></section>, document.body);
+
+export const StudyWorkbench: React.FC = () => {
+  const [workspace, setWorkspace] = useState<Workspace>(initialWorkspace());
+  const [view, setView] = useState<'overview' | 'plan' | 'focus' | 'books' | 'questions' | 'notes' | 'canvas' | 'settings'>('overview');
+  const [loaded, setLoaded] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [taskTitle, setTaskTitle] = useState(''); const [taskSubject, setTaskSubject] = useState<Subject>('数学');
+  const [focusName, setFocusName] = useState('数学复习'); const [focusSubject, setFocusSubject] = useState<Subject>('数学'); const [focusLength, setFocusLength] = useState(25);
+  const [activeFocus, setActiveFocus] = useState<{ remaining: number; started: number; paused: boolean } | null>(null);
+  const [selectedBook, setSelectedBook] = useState<string | null>(null); const [questionFilter, setQuestionFilter] = useState<'all' | 'wrong' | 'correct' | 'retry' | 'passed'>('all'); const [questionMode, setQuestionMode] = useState<'canvas' | 'reader'>('canvas');
+  const [bookTitle, setBookTitle] = useState(''); const [bookShelf, setBookShelf] = useState('数学'); const [manualPath, setManualPath] = useState('');
+  const [newShelfName, setNewShelfName] = useState(''); const [editingBookId, setEditingBookId] = useState<string | null>(null); const [bookEditorPosition, setBookEditorPosition] = useState<{ left: number; top: number } | null>(null); const [pendingBookDeleteId, setPendingBookDeleteId] = useState<string | null>(null);
+  const [skillInfo, setSkillInfo] = useState<{ directory?: string; skillPath?: string; promptPath?: string; prompt?: string } | null>(null);
+  const { notes, activeNoteId, addNote, updateNote, setActiveNoteId, loaded: notesLoaded } = useNoteStore();
+  const { settings } = useSettingsStore();
+  const initializedQuestionCanvases = useRef(false);
+
+  useEffect(() => { (async () => { const content = await window.electronAPI?.getWorkspaceState(); try { const restored = normalizeWorkspace(content ? JSON.parse(content) : null); const yesterday = dateOffset(-1); restored.tasks = restored.tasks.map((task) => !task.completed && task.bucket === 'daily' && task.date === yesterday ? { ...task, date: today(), sourceDate: yesterday } : task); setWorkspace(restored); } catch { setWorkspace(initialWorkspace()); } setLoaded(true); })(); }, []);
+  useEffect(() => { if (!loaded) return; const timer = window.setTimeout(() => window.electronAPI?.saveWorkspaceState(JSON.stringify(workspace, null, 2)), 350); return () => window.clearTimeout(timer); }, [workspace, loaded]);
+  useEffect(() => { if (!activeFocus || activeFocus.paused) return; const interval = window.setInterval(() => setActiveFocus((current) => current && !current.paused ? { ...current, remaining: Math.max(0, current.remaining - 1) } : current), 1000); return () => window.clearInterval(interval); }, [activeFocus?.paused]);
+  useEffect(() => { if (activeFocus?.remaining === 0) finishFocus(); }, [activeFocus?.remaining]);
+
+  const mutate = (fn: (current: Workspace) => Workspace) => setWorkspace((current) => fn(current));
+  const checkedIn = workspace.checkins.includes(today());
+  const dailyTasks = workspace.tasks.filter((task) => task.bucket === 'daily' && task.date === today());
+  const overdue = workspace.tasks.filter((task) => !task.completed && task.bucket === 'daily' && task.date < today());
+  const retryCount = workspace.questionBooks.flatMap((book) => book.questions).filter((question) => question.status === 'wrong' && question.mastery < 3 && !question.passed).length;
+  const totalFocus = workspace.focusRecords.reduce((sum, record) => sum + record.minutes, 0);
+  const weekFocus = workspace.focusRecords.filter((record) => record.date >= dateOffset(-6)).reduce((sum, record) => sum + record.minutes, 0);
+  const currentPhase = workspace.phases.find((phase) => phase.start <= today() && phase.end >= today())?.name || '自定义阶段';
+  const activeQuestionBook = workspace.questionBooks.find((book) => book.id === selectedBook) || workspace.questionBooks[0];
+  const popoverBook = editingBookId ? workspace.books.find((book) => book.id === editingBookId) : undefined;
+  const workbenchNotes = notes.filter((note) => note.noteType === 'note' && !note.isDeleted && !note.isArchived);
+  const workbenchCanvases = notes.filter((note) => note.noteType === 'canvas' && !note.isDeleted && !note.isArchived);
+  const selectedCanvas = workbenchCanvases.find((note) => note.id === activeNoteId) || workbenchCanvases[0];
+
+  const syncQuestionCanvas = (book: QuestionBook): string => {
+    const canvasId = book.canvasId || uid('question-canvas');
+    const canvasBook = { ...book, canvasId };
+    const title = `${book.title} · ${book.volume} · 题册画布`;
+    const payload = buildQuestionCanvas(canvasBook);
+    const existing = notes.find((note) => note.id === canvasId);
+    if (existing) updateNote(canvasId, { title, tags: ['学习工作台', '题册画布', book.subject], ...payload });
+    else {
+      const now = Date.now();
+      addNote({ id: canvasId, title, content: '', tags: ['学习工作台', '题册画布', book.subject], createdAt: now, updatedAt: now, isTodayPlan: false, noteType: 'canvas', isArchived: false, canvasLinks: [], ...payload });
+    }
+    return canvasId;
+  };
+
+  useEffect(() => {
+    if (!loaded || !notesLoaded || initializedQuestionCanvases.current) return;
+    initializedQuestionCanvases.current = true;
+    const missing = workspace.questionBooks.filter((book) => !book.canvasId);
+    if (!missing.length) return;
+    const canvasIds = new Map(missing.map((book) => [book.id, syncQuestionCanvas(book)]));
+    setWorkspace((current) => ({ ...current, questionBooks: current.questionBooks.map((book) => canvasIds.has(book.id) ? { ...book, canvasId: canvasIds.get(book.id) } : book) }));
+  }, [loaded, notesLoaded]);
+
+  useEffect(() => {
+    if (view === 'notes' && workbenchNotes.length && !workbenchNotes.some((note) => note.id === activeNoteId)) setActiveNoteId(workbenchNotes[0].id);
+  }, [view, workbenchNotes, activeNoteId, setActiveNoteId]);
+
+  useEffect(() => {
+    const openCanvas = (event: Event) => {
+      const canvasId = (event as CustomEvent<string>).detail;
+      setView('canvas');
+      if (canvasId) setActiveNoteId(canvasId);
+      if (canvasId && window.__muyujianPendingCanvasId === canvasId) delete window.__muyujianPendingCanvasId;
+    };
+    window.addEventListener('muyujian:open-canvas', openCanvas);
+    if (window.__muyujianPendingCanvasId) {
+      openCanvas(new CustomEvent('muyujian:open-canvas', { detail: window.__muyujianPendingCanvasId }));
+      delete window.__muyujianPendingCanvasId;
+    }
+    return () => window.removeEventListener('muyujian:open-canvas', openCanvas);
+  }, [setActiveNoteId]);
+
+  useEffect(() => {
+    if (view !== 'settings' || skillInfo) return;
+    window.electronAPI?.getQuestionBookSkill().then((result) => {
+      if (result?.success) setSkillInfo(result);
+      else if (result?.error) setNotice(`无法读取题册整理技能：${result.error}`);
+    });
+  }, [view, skillInfo]);
+
+  const addTask = () => { if (!taskTitle.trim()) return; mutate((current) => ({ ...current, tasks: [...current.tasks, { id: uid('task'), title: taskTitle.trim(), subject: taskSubject, date: today(), completed: false, bucket: 'daily' }] })); setTaskTitle(''); };
+  const toggleTask = (id: string) => mutate((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, completed: !task.completed } : task), checkins: checkedIn ? current.checkins : [...current.checkins, today()] }));
+  const postponeOverdue = () => mutate((current) => ({ ...current, tasks: current.tasks.map((task) => !task.completed && task.bucket === 'daily' && task.date < today() ? { ...task, date: today(), sourceDate: task.date } : task) }));
+  const ignoreTask = (id: string) => mutate((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, bucket: 'ignored' } : task) }));
+  const finishFocus = () => { if (!activeFocus) return; const minutes = Math.max(1, Math.round((focusLength * 60 - activeFocus.remaining) / 60)); mutate((current) => ({ ...current, focusRecords: [...current.focusRecords, { id: uid('focus'), taskName: focusName, subject: focusSubject, date: today(), minutes, completed: activeFocus.remaining === 0 }], checkins: checkedIn ? current.checkins : [...current.checkins, today()] })); setActiveFocus(null); window.electronAPI?.notifyWorkspace('暮雨笺专注完成', `${focusName} 已记录 ${minutes} 分钟`); };
+  const addShelf = () => { const name = newShelfName.trim(); if (!name) { setNotice('请输入书架分组名称。'); return; } if (workspace.shelves.includes(name)) { setNotice('该书架分组已存在。'); return; } mutate((current) => ({ ...current, shelves: [...current.shelves, name] })); setNewShelfName(''); setBookShelf(name); setNotice(`已新建「${name}」书架。`); };
+  const closeBookEditor = () => { setEditingBookId(null); setBookEditorPosition(null); setPendingBookDeleteId(null); };
+  const openBookEditor = (id: string, anchor?: HTMLElement) => { const width = 330; const height = 360; const rect = anchor?.getBoundingClientRect(); const top = rect ? Math.min(Math.max(12, rect.bottom + 8), Math.max(12, window.innerHeight - height)) : Math.max(12, Math.round((window.innerHeight - height) / 2)); const left = rect ? Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - width - 12)) : Math.max(12, Math.round((window.innerWidth - width) / 2)); setEditingBookId(id); setBookEditorPosition({ left, top }); setPendingBookDeleteId(null); };
+  const addBook = (sourcePath?: string, fallbackTitle?: string, originalPath?: string) => { const title = bookTitle.trim() || fallbackTitle; if (!title) { setNotice('请先填写书名，或使用书架内的“+”创建空白书本。'); return; } const id = uid('book'); mutate((current) => ({ ...current, books: [...current.books, { id, title, author: '', shelf: bookShelf, sourcePath: sourcePath || manualPath || undefined, originalPath, progress: 0, noteIds: [], questionBookIds: [] }] })); setBookTitle(''); setManualPath(''); openBookEditor(id); };
+  const createBookInShelf = (shelf: string) => { const id = uid('book'); mutate((current) => ({ ...current, books: [...current.books, { id, title: '未命名书籍', author: '', shelf, progress: 0, noteIds: [], questionBookIds: [] }] })); openBookEditor(id); setNotice(`已在「${shelf}」新建书本，可直接在浮层中编辑信息。`); };
+  const updateBook = (id: string, changes: Partial<Book>) => mutate((current) => ({ ...current, books: current.books.map((book) => book.id === id ? { ...book, ...changes } : book) }));
+  const deleteBook = (id: string) => { mutate((current) => ({ ...current, books: current.books.filter((book) => book.id !== id) })); if (editingBookId === id) closeBookEditor(); else setPendingBookDeleteId(null); setNotice('已从书架移除书本记录，原始文件不会被删除。'); };
+  const importBook = async () => { const result = await window.electronAPI?.chooseBook(); if (result?.path) addBook(result.path, result.name?.replace(/\.[^.]+$/, ''), result.originalPath); };
+  const applyQuestionBook = (book: QuestionBook, select = false) => {
+    const withCanvas = { ...book, canvasId: book.canvasId || uid('question-canvas') };
+    syncQuestionCanvas(withCanvas);
+    mutate((current) => ({ ...current, questionBooks: current.questionBooks.some((item) => item.id === withCanvas.id) ? current.questionBooks.map((item) => item.id === withCanvas.id ? withCanvas : item) : [...current.questionBooks, withCanvas] }));
+    if (select) setSelectedBook(withCanvas.id);
+    return withCanvas;
+  };
+  const mergeQuestionBook = (current: QuestionBook, incoming: QuestionBook): QuestionBook => {
+    const overrides: QuestionBook['overrides'] = {};
+    const questions = incoming.questions.map((question) => {
+      const prior = current.questions.find((old) => old.number === question.number);
+      const override = prior ? current.overrides[prior.id] : undefined;
+      const id = prior?.id || question.id;
+      if (override) overrides[id] = override;
+      return { ...question, id, ...override };
+    });
+    return { ...incoming, id: current.id, canvasId: current.canvasId, overrides, questions };
+  };
+  const importQuestionBook = async () => {
+    try {
+      const result = await window.electronAPI?.chooseQuestionBook();
+      if (!result?.content) return;
+      const incoming = { ...parseQuestionBook(result.content, result.folder), originalPath: result.originalFolder };
+      const duplicate = workspace.questionBooks.find((item) => item.title === incoming.title && item.volume === incoming.volume);
+      if (duplicate) {
+        const option = prompt('发现同名题册：输入 merge 按题号合并，输入 copy 创建副本，其它取消', 'merge');
+        if (option === 'merge') applyQuestionBook(mergeQuestionBook(duplicate, incoming), true);
+        else if (option === 'copy') applyQuestionBook(incoming, true);
+        else return;
+      } else applyQuestionBook(incoming, true);
+      setNotice('题册已导入为托管副本，并已同步生成题册画布与章节定位。');
+    } catch (error: any) { alert(`导入失败：${error.message}`); }
+  };
+  const addManualQuestion = () => {
+    if (!activeQuestionBook) return;
+    const promptText = prompt('题干');
+    if (!promptText?.trim()) return;
+    const answer = prompt('标准答案') || '待补充';
+    const reason = prompt('错误原因（可留空）') || undefined;
+    const question: Question = { id: uid('question'), chapter: prompt('章节名称', '手动录入') || '手动录入', number: `Q${String(activeQuestionBook.questions.length + 1).padStart(3, '0')}`, status: 'wrong', prompt: promptText.trim(), answer, mine: prompt('我的答案') || undefined, reason, mastery: 1, passed: false, tags: [] };
+    applyQuestionBook({ ...activeQuestionBook, questions: [...activeQuestionBook.questions, question] });
+  };
+  const refreshActiveBook = async () => {
+    if (!activeQuestionBook) return;
+    if (!activeQuestionBook.sourcePath) { alert('此题册没有可刷新的托管目录。请先通过“导入题册 Markdown”导入。'); return; }
+    try {
+      const result = await window.electronAPI?.readQuestionBook(activeQuestionBook.sourcePath);
+      if (!result?.content) throw new Error(result?.error || '题册文件不存在');
+      const refreshed = mergeQuestionBook(activeQuestionBook, parseQuestionBook(result.content, result.folder));
+      applyQuestionBook(refreshed);
+      setNotice('已读取此题册对应目录中的 questions.md，题册画布与章节索引已同步更新。');
+    } catch (error: any) { alert(`刷新失败：${error.message}`); }
+  };
+  const updateQuestion = (questionId: string, update: Partial<Question>) => {
+    if (!activeQuestionBook) return;
+    const questions = activeQuestionBook.questions.map((question) => question.id === questionId ? { ...question, ...update } : question);
+    applyQuestionBook({ ...activeQuestionBook, questions, overrides: { ...activeQuestionBook.overrides, [questionId]: { ...activeQuestionBook.overrides[questionId], ...update } as Pick<Question, 'mastery' | 'passed' | 'tags'> } });
+  };
+  const addQuestionTag = (question: Question) => { const tag = prompt('重点标签名称'); if (!tag?.trim() || question.tags.includes(tag.trim())) return; updateQuestion(question.id, { tags: [...question.tags, tag.trim()] }); mutate((current) => ({ ...current, customTags: current.customTags.includes(tag.trim()) ? current.customTags : [...current.customTags, tag.trim()] })); };
+  const exportTagBook = (tag: string) => { if (!activeQuestionBook) return; const questions = activeQuestionBook.questions.filter((question) => question.tags.includes(tag)); if (!questions.length) return; const title = `${activeQuestionBook.title} · ${tag}`; applyQuestionBook({ ...activeQuestionBook, id: uid('tagbook'), title, sourcePath: undefined, originalPath: undefined, canvasId: undefined, questions: questions.map((question) => ({ ...question, id: uid('question') })), overrides: {} }, true); setNotice(`已从「${tag}」生成新题册及其题册画布。`); };
+  const importPlan = (file: File) => file.text().then((content) => { const taskLines = content.split(/\r?\n/).filter((line) => /^\s*-\s+\[\s?\]/.test(line)); const tasks = taskLines.map((line) => ({ id: uid('plan'), title: line.replace(/^\s*-\s+\[\s?\]\s*/, '').trim(), subject: '数学' as Subject, date: today(), completed: false, bucket: 'daily' as TaskBucket })); if (!tasks.length) throw new Error('未找到 Markdown 任务清单'); mutate((current) => ({ ...current, tasks: [...current.tasks, ...tasks] })); setNotice(`已从计划文件导入 ${tasks.length} 项今日任务。`); }).catch((error) => alert(`计划导入失败：${error.message}`));
+  const exportCheckin = () => { const done = dailyTasks.filter((task) => task.completed).length; const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><rect width="100%" height="100%" fill="#eff6ff"/><rect x="56" y="52" width="1088" height="526" rx="28" fill="white"/><text x="110" y="150" font-family="Segoe UI, Microsoft YaHei" font-size="46" font-weight="700" fill="#1e3a8a">暮雨笺 · 今日学习打卡</text><text x="110" y="225" font-family="monospace" font-size="30" fill="#2563eb">${today()}</text><text x="110" y="335" font-family="Segoe UI, Microsoft YaHei" font-size="74" font-weight="700" fill="#0f172a">${formatDuration(totalFocus)}</text><text x="110" y="385" font-family="Segoe UI, Microsoft YaHei" font-size="26" fill="#64748b">累计专注时长 · 今日任务 ${done}/${dailyTasks.length}</text><circle cx="980" cy="330" r="115" fill="none" stroke="#dbeafe" stroke-width="25"/><circle cx="980" cy="330" r="115" fill="none" stroke="#10b981" stroke-width="25" stroke-linecap="round" stroke-dasharray="${Math.max(1, (dailyTasks.length ? done / dailyTasks.length : 0) * 723)} 723" transform="rotate(-90 980 330)"/></svg>`; const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })); link.download = `暮雨笺打卡-${today()}.svg`; link.click(); URL.revokeObjectURL(link.href); };
+  const createWorkbenchNote = () => { const title = prompt('笔记标题', '新学习笔记'); if (title === null) return; const now = Date.now(); const note: Note = { id: generateId(), title: title.trim() || '新学习笔记', content: '# 学习笔记\n\n', tags: ['学习工作台'], createdAt: now, updatedAt: now, isTodayPlan: false, noteType: 'note', isArchived: false }; addNote(note); setActiveNoteId(note.id); };
+  const createWorkbenchCanvas = () => { const now = Date.now(); const canvas: Note = { id: generateId(), title: `新建画布 ${new Date(now).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`, content: '', tags: ['学习工作台'], createdAt: now, updatedAt: now, isTodayPlan: false, noteType: 'canvas', isArchived: false, canvasItems: [], canvasLinks: [] }; addNote(canvas); setActiveNoteId(canvas.id); setView('canvas'); setNotice('已新建空白画布，可直接在画布顶部修改名称。'); };
+  const openQuestionCanvas = () => { if (!activeQuestionBook) return; const withCanvas = applyQuestionBook(activeQuestionBook); setActiveNoteId(withCanvas.canvasId!); setView('canvas'); };
+  const copyAgentPrompt = () => { if (!skillInfo?.prompt) return; navigator.clipboard.writeText(skillInfo.prompt).then(() => setNotice('已复制 Agent 提示词。')).catch(() => alert('复制失败，请在下方文本框中手动复制。')); };
+
+  const filteredQuestions = activeQuestionBook?.questions.filter((question) => questionFilter === 'all' || question.status === questionFilter || (questionFilter === 'retry' && question.status === 'wrong' && question.mastery < 3 && !question.passed) || (questionFilter === 'passed' && question.passed)) || [];
+  const chapters = [...new Set(activeQuestionBook?.questions.map((question) => question.chapter) || [])];
+  const nav = [['overview', '总览'], ['plan', '规划'], ['focus', '专注'], ['books', '书架'], ['questions', '题册'], ['notes', '笔记'], ['canvas', '画布'], ['settings', '设置']] as const;
+
+  if (!loaded) return <div className="study-loading">正在加载学习工作台…</div>;
+  return <div className={`study-shell ${settings.wallpaper ? 'has-workspace-wallpaper' : ''}`} style={settings.wallpaper ? { backgroundImage: `linear-gradient(rgba(247,250,255,.56), rgba(247,250,255,.56)), url("${settings.wallpaper}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' } : undefined}>
+    <aside className="study-nav"><div className="study-brand"><span>暮雨笺</span><small>学习工作台</small></div>{nav.map(([id, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}>{label}</button>)}<div className="study-nav-foot">v3.0.0 · 本地优先</div></aside>
+    <main className="study-main">
+      <header className="study-header"><div><h1>{nav.find(([id]) => id === view)?.[1]}</h1><p>{view === 'overview' ? '考研冲刺工作台' : '所有内容仅保存在本机工作台目录'}</p></div><div className="study-header-actions"><button onClick={() => window.electronAPI?.backupWorkspace().then((result) => setNotice(result?.success ? `已导出综合备份：${result.path}` : '已取消备份'))}>导出综合备份</button><button onClick={() => { if (confirm('恢复备份会覆盖同名工作台文件，继续？')) window.electronAPI?.restoreWorkspace().then((result) => { if (result?.success) window.location.reload(); else if (result?.error !== 'cancelled') alert(`恢复失败：${result?.error}`); }); }}>导入恢复</button></div></header>
+      {workspace.tasks.length + workspace.books.length + workspace.questionBooks.length >= 30 && <div className="study-notice">工作台内容已超过 30 条，建议现在导出一次综合备份。<button onClick={() => setNotice('')}>×</button></div>}
+      {notice && <div className="study-notice">{notice}<button onClick={() => setNotice('')}>×</button></div>}
+      {view === 'overview' && <section className="study-page">
+        <div className="countdown-card"><span>距离考研</span><strong>{remaining(workspace.examDate)}</strong><b>天</b><p>{workspace.examDate} · 当前 {currentPhase}</p><button onClick={() => setView('plan')}>调整计划</button></div>
+        <div className="study-grid three"><section className="panel"><h2>今天要处理</h2>{overdue.length > 0 && <button className="alert-row" onClick={postponeOverdue}>逾期任务 {overdue.length} 项 · 顺延至今天</button>}<button className="queue-row" onClick={() => setView('plan')}>未完成待办 {dailyTasks.filter((task) => !task.completed).length} 项</button><button className="queue-row" onClick={() => { setView('questions'); setQuestionFilter('retry'); }}>待重做错题 {retryCount} 道</button></section><section className="panel"><h2>科目概览</h2>{subjects.map((subject) => <div className="subject-line" key={subject}><b>{subject}</b><span>{currentPhase}</span><small>{formatDuration(workspace.focusRecords.filter((record) => record.subject === subject && record.date >= dateOffset(-6)).reduce((sum, record) => sum + record.minutes, 0))} · {workspace.focusRecords.filter((record) => record.subject === subject && record.date >= dateOffset(-6)).length} 次</small></div>)}</section><section className="panel"><h2>本月打卡</h2><div className="heatmap">{Array.from({ length: 35 }, (_, index) => { const date = dateOffset(index - 34); return <i key={date} className={workspace.checkins.includes(date) ? 'done' : ''} title={date} />; })}</div><p className="muted">已打卡 {workspace.checkins.length} 天 · 本周 {formatDuration(weekFocus)}</p></section></div>
+        <section className="panel today-list"><div className="panel-heading"><h2>今日任务</h2><button onClick={() => setView('plan')}>管理</button></div>{dailyTasks.map((task) => <label key={task.id} className={task.completed ? 'task done' : 'task'}><input type="checkbox" checked={task.completed} onChange={() => toggleTask(task.id)} /><span>{task.title}{task.sourceDate && <em>昨天未完成</em>}</span><small>{task.subject}</small></label>)}</section>
+      </section>}
+      {view === 'plan' && <section className="study-page"><div className="study-grid two"><section className="panel"><h2>每日任务</h2><div className="inline-form"><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="添加今日任务" /><select value={taskSubject} onChange={(event) => setTaskSubject(event.target.value as Subject)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select><button onClick={addTask}>添加</button></div>{[...dailyTasks, ...overdue].map((task) => <div className="task-row" key={task.id}><label><input type="checkbox" checked={task.completed} onChange={() => toggleTask(task.id)} />{task.title}</label><span>{task.date < today() ? '逾期' : task.subject}</span><button title="暂时忽略，移入月综合任务" onClick={() => ignoreTask(task.id)}>暂缓</button></div>)}</section><section className="panel"><h2>计划文件</h2><p className="muted">导入 Markdown 任务清单；支持以 <code>- [ ] 任务名称</code> 编写。</p><label className="file-button">导入计划文件<input type="file" accept=".md,.markdown,.txt" hidden onChange={(event) => event.target.files?.[0] && importPlan(event.target.files[0])} /></label><h3>月综合任务</h3>{(['monthly', 'ignored', 'backlog'] as TaskBucket[]).map((bucket) => <div className="bucket" key={bucket}><b>{{ monthly: '月计划与总结', ignored: '暂时忽略', backlog: '积压任务', daily: '' }[bucket]}</b>{workspace.tasks.filter((task) => task.bucket === bucket).map((task) => <p key={task.id}>{task.title}</p>)}</div>)}</section></div><section className="panel phases"><h2>考研日期与阶段</h2><label>考试日期<input type="date" value={workspace.examDate} onChange={(event) => mutate((current) => ({ ...current, examDate: event.target.value }))} /></label>{workspace.phases.map((phase, index) => <div className="phase-row" key={phase.name}><input value={phase.name} onChange={(event) => mutate((current) => ({ ...current, phases: current.phases.map((item, position) => position === index ? { ...item, name: event.target.value } : item) }))} /><input type="date" value={phase.start} onChange={(event) => mutate((current) => ({ ...current, phases: current.phases.map((item, position) => position === index ? { ...item, start: event.target.value } : item) }))} /><input type="date" value={phase.end} onChange={(event) => mutate((current) => ({ ...current, phases: current.phases.map((item, position) => position === index ? { ...item, end: event.target.value } : item) }))} /></div>)}</section></section>}
+      {view === 'focus' && <section className="study-page focus-page"><section className="focus-card"><span>{activeFocus?.paused ? '已暂停' : activeFocus ? '专注中' : '准备开始'}</span><strong>{String(Math.floor((activeFocus?.remaining ?? focusLength * 60) / 60)).padStart(2, '0')}:{String((activeFocus?.remaining ?? focusLength * 60) % 60).padStart(2, '0')}</strong><div className="focus-controls">{!activeFocus ? <button className="primary" onClick={() => setActiveFocus({ remaining: focusLength * 60, started: Date.now(), paused: false })}>开始计时</button> : <><button onClick={() => setActiveFocus({ ...activeFocus, paused: !activeFocus.paused })}>{activeFocus.paused ? '继续' : '暂停'}</button><button className="danger" onClick={finishFocus}>结束并记录</button></>}</div></section><section className="panel"><h2>专注设置</h2><div className="inline-form"><input value={focusName} onChange={(event) => setFocusName(event.target.value)} placeholder="当前任务名称" /><select value={focusSubject} onChange={(event) => setFocusSubject(event.target.value as Subject)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select><input type="number" min="1" max="240" value={focusLength} onChange={(event) => setFocusLength(Number(event.target.value) || 25)} /></div><p className="muted">默认 25 分钟；完成时发送 Windows 通知。休息建议：短休 5 分钟，长休 15 分钟。</p></section><section className="study-grid two"><section className="panel"><h2>学习统计</h2><div className="big-number">{formatDuration(totalFocus)}<small>累计学习时长</small></div>{subjects.map((subject) => { const minutes = workspace.focusRecords.filter((record) => record.subject === subject).reduce((sum, record) => sum + record.minutes, 0); return <div className="bar-row" key={subject}><span>{subject}</span><i><b style={{ width: `${totalFocus ? minutes / totalFocus * 100 : 0}%` }} /></i><small>{formatDuration(minutes)}</small></div>; })}</section><section className="panel"><h2>打卡图片</h2><p className="muted">包含日期、任务完成数、学习时长与完成环。</p><button className="primary" onClick={exportCheckin}>导出今日打卡图片</button></section></section></section>}
+      {view === 'books' && <section className="study-page"><section className="panel"><div className="panel-heading"><h2>我的书架</h2><span className="muted">点击书本或“编辑”可在卡片旁展开管理面板。</span></div><div className="book-form"><input value={bookTitle} onChange={(event) => setBookTitle(event.target.value)} placeholder="书名" /><select value={bookShelf} onChange={(event) => setBookShelf(event.target.value)}>{workspace.shelves.map((shelf) => <option key={shelf}>{shelf}</option>)}</select><input value={manualPath} onChange={(event) => setManualPath(event.target.value)} placeholder="本地绝对路径（可选）" /><button onClick={() => addBook()}>添加书本</button><button onClick={importBook}>选择文件导入</button></div><div className="shelf-create-form"><input value={newShelfName} onChange={(event) => setNewShelfName(event.target.value)} placeholder="新书架分组名称" onKeyDown={(event) => { if (event.key === 'Enter') addShelf(); }} /><button onClick={addShelf}>新建书架分组</button></div></section>{workspace.shelves.map((shelf) => <section className="shelf" key={shelf}><div className="shelf-heading"><h2>{shelf}</h2><span>{workspace.books.filter((book) => book.shelf === shelf).length} 本</span></div><div className="book-grid">{workspace.books.filter((book) => book.shelf === shelf).map((book) => <article className={`book-card ${editingBookId === book.id ? 'active' : ''}`} key={book.id} tabIndex={0} role="button" aria-label={`编辑书本 ${book.title}`} onClick={(event) => openBookEditor(book.id, event.currentTarget)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBookEditor(book.id, event.currentTarget); } }}><div className="book-cover">{book.title.slice(0, 1)}</div><strong>{book.title}</strong><span>{book.author || '未填写作者'}</span><progress value={book.progress} max="100" /><small>{book.progress}% · {book.lastOpenedAt ? '最近打开' : '未打开'}</small><div className="book-card-actions" onClick={(event) => event.stopPropagation()}><button onClick={() => updateBook(book.id, { progress: Math.min(100, book.progress + 10) })}>进度 +10%</button><button onClick={(event) => editingBookId === book.id ? closeBookEditor() : openBookEditor(book.id, event.currentTarget)}>编辑</button>{book.sourcePath && <button onClick={() => { window.electronAPI?.openWorkspacePath(book.sourcePath!); updateBook(book.id, { lastOpenedAt: Date.now() }); }}>系统打开</button>}</div></article>)}<button className="book-add" onClick={() => createBookInShelf(shelf)} title={`在${shelf}中新建书本`} aria-label={`在${shelf}中新建书本`}>+</button></div></section>)}{popoverBook && bookEditorPosition && <BookEditorPopover book={popoverBook} shelves={workspace.shelves} position={bookEditorPosition} pendingDelete={pendingBookDeleteId === popoverBook.id} onClose={closeBookEditor} onUpdate={(changes) => updateBook(popoverBook.id, changes)} onRequestDelete={() => setPendingBookDeleteId(popoverBook.id)} onDelete={() => deleteBook(popoverBook.id)} />}</section>}
+      {view === 'questions' && <section className="study-page question-page"><section className="panel question-toolbar"><div><h2>题册与错题整理</h2><select value={activeQuestionBook?.id || ''} onChange={(event) => setSelectedBook(event.target.value)}>{workspace.questionBooks.map((book) => <option value={book.id} key={book.id}>{book.title} · {book.volume}</option>)}</select></div><div><button onClick={importQuestionBook}>导入题册 Markdown</button><button onClick={addManualQuestion}>手动添加错题</button><button onClick={refreshActiveBook}>刷新整理文件</button><button onClick={openQuestionCanvas}>打开题册画布</button><button onClick={() => setQuestionMode(questionMode === 'canvas' ? 'reader' : 'canvas')}>{questionMode === 'canvas' ? '连续阅读' : '画布式阅读'}</button></div></section><div className="question-layout"><aside className="question-tree"><b>{activeQuestionBook?.title}</b>{chapters.map((chapter) => <button key={chapter} onClick={() => document.getElementById(`chapter-${chapter}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{chapter}<small>{activeQuestionBook?.questions.filter((question) => question.chapter === chapter).length}</small></button>)}</aside><section className={questionMode === 'canvas' ? 'question-canvas' : 'question-reader'}><div className="question-filters">{([['all', '全部'], ['wrong', '错误题'], ['correct', '正确题'], ['retry', '待重做'], ['passed', '已通过']] as const).map(([id, label]) => <button className={questionFilter === id ? 'active' : ''} onClick={() => setQuestionFilter(id)} key={id}>{label}</button>)}</div>{chapters.map((chapter, chapterIndex) => <div id={`chapter-${chapter}`} className="question-chapter" key={chapter}><h2>{chapter}</h2><div className="question-cards">{filteredQuestions.filter((question) => question.chapter === chapter).map((question, index) => <article className="question-card" key={question.id} style={questionMode === 'canvas' ? { transform: `translate(${(index % 3) * 6}px, ${(chapterIndex % 2) * 8}px)` } : undefined}><div className="question-tags">{question.status === 'wrong' ? <span className="wrong">错误题</span> : <span className="correct">正确题</span>}{question.tags.map((tag) => <button key={tag} onClick={() => exportTagBook(tag)} title="导出此标签题册">{tag}</button>)}<button onClick={() => addQuestionTag(question)} title="添加重点标签">+标签</button></div><h3>{question.number}</h3><p className="question-prompt">{question.prompt || '未提供题干'}</p><details><summary>查看标准答案</summary><p>{question.answer || '未提供标准答案'}</p>{question.mine && <p><b>我的答案：</b>{question.mine}</p>}{question.reason && <p><b>错误原因：</b>{question.reason}</p>}</details><div className="question-footer"><span>{Array.from({ length: 5 }, (_, star) => <button className={star < question.mastery ? 'star on' : 'star'} key={star} onClick={() => updateQuestion(question.id, { mastery: (star + 1) as Mastery })}>★</button>)}</span>{question.status === 'wrong' && <button onClick={() => updateQuestion(question.id, { passed: !question.passed, mastery: question.passed ? question.mastery : Math.min(5, question.mastery + 1) as Mastery })}>{question.passed ? '取消通过' : '已重做并通过'}</button>}</div></article>)}</div></div>)}</section></div></section>}
+      {view === 'notes' && <section className="study-page workbench-tool-page"><div className="workbench-tool"><aside className="workbench-item-list"><div className="panel-heading"><h2>学习笔记</h2><button onClick={createWorkbenchNote}>新建</button></div><p className="muted">与题册、书本和画布共用本地备份。</p>{workbenchNotes.length ? workbenchNotes.map((note) => <button key={note.id} className={activeNoteId === note.id ? 'active' : ''} onClick={() => setActiveNoteId(note.id)}><strong>{note.title || '未命名笔记'}</strong><small>{new Date(note.updatedAt).toLocaleDateString('zh-CN')}</small></button>) : <div className="workbench-empty">还没有学习笔记。<button onClick={createWorkbenchNote}>创建第一篇</button></div>}</aside><div className="workbench-note-stage"><Editor /><Preview /></div></div></section>}
+      {view === 'canvas' && <section className="study-page workbench-tool-page"><div className="workbench-tool"><aside className="workbench-item-list"><div className="panel-heading"><h2>无限画布</h2><button onClick={createWorkbenchCanvas}>新建</button></div><p className="muted">可自由摆放图片、文字与关联笔记。</p>{workbenchCanvases.length ? workbenchCanvases.map((canvas) => <button key={canvas.id} className={selectedCanvas?.id === canvas.id ? 'active' : ''} onClick={() => setActiveNoteId(canvas.id)}><strong>{canvas.title || '未命名画布'}</strong><small>{canvas.canvasItems?.length || 0} 个元素</small></button>) : <div className="workbench-empty">还没有学习画布。<button onClick={createWorkbenchCanvas}>创建第一张</button></div>}</aside><div className="workbench-canvas-stage">{selectedCanvas ? <CanvasBoard note={selectedCanvas} /> : <div className="workbench-stage-empty">新建画布后即可开始整理知识框架。</div>}</div></div></section>}
+      {view === 'settings' && <section className="study-page"><section className="panel"><h2>新手引导与使用指南</h2><p className="muted">首次启动会自动显示新手引导；完整操作说明保存在“笔记”中的《暮雨笺 v3 使用指南》。</p><button onClick={() => window.dispatchEvent(new Event('muyujian:show-onboarding'))}>重新查看新手引导</button></section><WorkspaceWallpaperSettings /><section className="panel"><h2>题册整理技能与 Agent 提示词</h2><p className="muted">软件不在本机执行 OCR 或 AI。请让你的 Agent 按技能将图片或文本整理为 <code>questions.md</code>，再导入题册；“刷新整理文件”会直接读取题册托管目录中的该文件。</p>{skillInfo ? <><p className="muted">技能位置：<code>{skillInfo.skillPath}</code><br />提示词位置：<code>{skillInfo.promptPath}</code></p><div className="inline-actions"><button onClick={() => skillInfo.directory && window.electronAPI?.openWorkspacePath(skillInfo.directory)}>打开技能目录</button><button onClick={() => skillInfo.promptPath && window.electronAPI?.openWorkspacePath(skillInfo.promptPath)}>打开提示词文件</button><button onClick={copyAgentPrompt}>复制 Agent 提示词</button></div><textarea className="agent-prompt" readOnly value={skillInfo.prompt || ''} aria-label="题册整理 Agent 提示词" /></> : <p className="muted">正在读取安装内置的题册整理技能…</p>}</section><section className="panel"><h2>数据目录与综合备份</h2><p className="muted">当前目录：<code id="workspace-root">正在读取…</code></p><WorkspaceRoot onMigrated={(message) => setNotice(message)} /><p className="muted">迁移时逐文件比对 SHA-256；校验成功后保留旧目录，待你确认后再清理。</p></section><section className="panel"><h2>文件案例</h2><p className="muted">规划、专注、书架、题册、笔记、画布、设置与备份均提供文件案例；题册和计划案例可直接导入。</p><button onClick={() => window.electronAPI?.openWorkspaceExamples().then((result) => { if (!result?.success) alert(`无法打开案例目录：${result?.error || '未知错误'}`); })}>打开案例目录</button></section><section className="panel"><h2>示例数据</h2><p className="muted">当前工作台含预置计划、打卡与题册样例。清除后无法自动恢复。</p><button className="danger" onClick={() => { if (confirm('确定清空学习工作台示例与全部学习数据？此操作不可恢复。')) setWorkspace({ ...initialWorkspace(), tasks: [], questionBooks: [], checkins: [], focusRecords: [], books: [] }); }}>清空示例数据</button></section><section className="panel"><h2>标签</h2><p className="muted">系统状态与自定义重点标签分层保存；导出标签题册时保留全部题目信息和通过记录。</p></section></section>}
+    </main><nav className="study-mobile-nav">{nav.map(([id, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}>{label}</button>)}</nav>
+  </div>;
+};
+
+const WorkspaceRoot: React.FC<{ onMigrated: (message: string) => void }> = ({ onMigrated }) => {
+  useEffect(() => { window.electronAPI?.getWorkspaceRoot().then((root) => { const target = document.getElementById('workspace-root'); if (target) target.textContent = root; }); }, []);
+  const changeRoot = async () => { const picked = await window.electronAPI?.chooseWorkspaceRoot(); if (!picked?.path) return; const result = await window.electronAPI?.migrateWorkspace(picked.path); if (result?.success) { const target = document.getElementById('workspace-root'); if (target) target.textContent = result.destination || picked.path; onMigrated(`迁移完成，已校验 ${result.files || 0} 个文件。旧目录仍保留。`); } else alert(`迁移失败：${result?.error}`); };
+  return <button onClick={changeRoot}>修改并迁移数据目录</button>;
+};

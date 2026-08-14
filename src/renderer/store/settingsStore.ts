@@ -6,6 +6,8 @@ interface Settings {
   textMode: TextMode;
   quickNoteShortcut: string;
   autoSaveInterval: number;
+  wallpaper?: string;
+  onboardingCompleted?: boolean;
 }
 
 interface SettingsStore {
@@ -25,7 +27,9 @@ function loadSettings(): Settings {
     const parsed = data ? JSON.parse(data) : {};
     return { theme: parsed.theme || defaultSettings.theme, textMode: parsed.textMode || defaultSettings.textMode,
       quickNoteShortcut: parsed.quickNoteShortcut || defaultSettings.quickNoteShortcut,
-      autoSaveInterval: parsed.autoSaveInterval || defaultSettings.autoSaveInterval };
+      autoSaveInterval: parsed.autoSaveInterval || defaultSettings.autoSaveInterval,
+      wallpaper: typeof parsed.wallpaper === 'string' ? parsed.wallpaper : undefined,
+      onboardingCompleted: parsed.onboardingCompleted === true };
   } catch { return defaultSettings; }
 }
 

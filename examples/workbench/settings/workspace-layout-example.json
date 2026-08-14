@@ -1,0 +1,10 @@
+{
+  "examDate": "2026-12-21",
+  "phases": [
+    { "name": "一轮", "start": "2026-01-01", "end": "2026-06-30" },
+    { "name": "二轮", "start": "2026-07-01", "end": "2026-09-30" },
+    { "name": "冲刺", "start": "2026-10-01", "end": "2026-12-21" }
+  ],
+  "workspaceRoot": "D:\\MuyujianWorkspace",
+  "backupFormat": ".muyujian-workspace"
+}

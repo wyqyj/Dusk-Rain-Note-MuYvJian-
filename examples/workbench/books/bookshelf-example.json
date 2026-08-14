@@ -1,0 +1,16 @@
+{
+  "shelves": ["数学", "英语", "政治", "业务课", "数据结构"],
+  "books": [
+    {
+      "id": "book-example-1",
+      "title": "张宇高等数学基础 36 讲",
+      "author": "张宇",
+      "shelf": "数学",
+      "sourcePath": "books/数学/张宇高等数学基础36讲.pdf",
+      "originalPath": "D:\\Study\\Books\\张宇高等数学基础36讲.pdf",
+      "progress": 35,
+      "noteIds": ["note-example-1"],
+      "questionBookIds": ["question-book-example-1"]
+    }
+  ]
+}

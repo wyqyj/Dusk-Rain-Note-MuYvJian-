@@ -88,14 +88,14 @@ export const Sidebar: React.FC = () => {
   } = useNoteStore();
   const {
     searchQuery, filterTags,
-    setSearchQuery, toggleFilterTag, clearFilterTags,
+    setSearchQuery, toggleFilterTag, clearFilterTags, setShowKanban, setShowWorkbench,
   } = useUIStore();
   const { t } = useSettingsStore();
 
   const [showDeadlinePicker, setShowDeadlinePicker] = useState<string | null>(null);
   const [showTagInput, setShowTagInput] = useState<string | null>(null);
   const [newTag, setNewTag] = useState('');
-  const [sideSection, setSideSection] = useState<'all' | 'todo' | 'archived' | 'trash'>('all');
+  const [sideSection, setSideSection] = useState<'all' | 'todo' | 'canvas' | 'archived' | 'trash'>('all');
 
   // 点击外部关闭标签输入
   useEffect(() => {
@@ -107,6 +107,7 @@ export const Sidebar: React.FC = () => {
 
   const allTags = useMemo(() => Array.from(new Set(notes.flatMap((n) => n.tags))), [notes]);
   const todoNotes = useMemo(() => notes.filter((n) => (n.noteType === 'todo' || n.isTodayPlan) && !n.isArchived && !n.isDeleted), [notes]);
+  const canvasNotes = useMemo(() => notes.filter((n) => n.noteType === 'canvas' && !n.isArchived && !n.isDeleted), [notes]);
   const archivedNotes = useMemo(() => notes.filter((n) => n.isArchived && !n.isDeleted), [notes]);
   const trashNotes = useMemo(() => notes.filter((n) => n.isDeleted), [notes]);
 
@@ -116,11 +117,13 @@ export const Sidebar: React.FC = () => {
       if (sideSection !== 'trash' && note.isDeleted) return false;
       if (sideSection === 'todo' && note.noteType !== 'todo' && !note.isTodayPlan) return false;
       if (sideSection === 'todo' && note.isArchived) return false;
+      if (sideSection === 'canvas' && (note.noteType !== 'canvas' || note.isArchived)) return false;
       if (sideSection === 'archived' && !note.isArchived) return false;
       if (sideSection === 'all' && note.isArchived) return false;
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        if (!note.title.toLowerCase().includes(q) && !note.content.toLowerCase().includes(q)) return false;
+        const canvasText = note.canvasItems?.map((item) => item.content).join(' ') || '';
+        if (!note.title.toLowerCase().includes(q) && !note.content.toLowerCase().includes(q) && !canvasText.toLowerCase().includes(q)) return false;
       }
       if (filterTags.length > 0) {
         if (!filterTags.every(tag => note.tags.includes(tag))) return false;
@@ -174,6 +177,17 @@ export const Sidebar: React.FC = () => {
     clearFilterTags();
   };
 
+  const handleCreateCanvas = () => {
+    const note: Note = {
+      id: generateId(), title: '未命名画布', content: '', tags: [],
+      createdAt: Date.now(), updatedAt: Date.now(), isTodayPlan: false, noteType: 'canvas', isArchived: false, canvasItems: [],
+    };
+    addNote(note);
+    setActiveNoteId(note.id);
+    setSideSection('canvas');
+    clearFilterTags();
+  };
+
   const handleDeleteNote = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(t.deleteConfirm)) deleteNote(id);
@@ -219,9 +233,9 @@ export const Sidebar: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gradient-to-b from-rose-50/80 to-white dark:from-gray-900 dark:to-gray-950 border-r border-rose-100 dark:border-gray-800">
+    <div className="sidebar-panel flex flex-col h-full bg-gradient-to-b from-rose-50/80 to-white dark:from-gray-900 dark:to-gray-950 border-r border-rose-100 dark:border-gray-800">
       {/* 新建按钮 */}
-      <div className="p-3 pb-2">
+      <div className="sidebar-actions p-3 pb-2">
         <button onClick={handleCreateNote}
           className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 bg-gradient-to-r from-rose-400 to-pink-400 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md active:scale-[0.98]">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -229,10 +243,15 @@ export const Sidebar: React.FC = () => {
           </svg>
           {t.newNote}
         </button>
+        <button onClick={handleCreateCanvas}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-indigo-100 dark:border-indigo-900/60 text-indigo-500 dark:text-indigo-300 rounded-lg text-xs font-medium hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-all">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4zM4 10h16M10 4v16M4 16h16M16 4v16" /></svg>
+          新建画布
+        </button>
       </div>
 
       {/* 分类导航 */}
-      <div className="px-3 pb-2 space-y-0.5">
+      <div className="sidebar-navigation px-3 pb-2 space-y-0.5">
         <button onClick={() => { setSideSection('all'); clearFilterTags(); }}
           className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${sideSection === 'all' && filterTags.length === 0
             ? 'bg-white dark:bg-gray-800 text-rose-500 shadow-sm font-medium'
@@ -241,7 +260,23 @@ export const Sidebar: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
           </svg>
           {t.all}
-          <span className="ml-auto text-xs text-gray-300">{notes.filter(n => !n.isArchived).length}</span>
+          <span className="ml-auto text-xs text-gray-300">{notes.filter(n => !n.isArchived && !n.isDeleted).length}</span>
+        </button>
+
+        <button onClick={() => { setSideSection('canvas'); clearFilterTags(); }}
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${sideSection === 'canvas'
+            ? 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-300 shadow-sm font-medium'
+            : 'text-gray-500 dark:text-gray-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20'}`}>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4zM4 10h16M10 4v16M4 16h16M16 4v16" /></svg>
+          无限画布
+          <span className="ml-auto text-xs text-gray-300">{canvasNotes.length}</span>
+        </button>
+
+        <button onClick={() => { setShowWorkbench(true); setShowKanban(false); }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/20 transition-all">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}><path strokeLinecap="round" strokeLinejoin="round" d="M4 19V5m0 14h16M8 15v-3m4 3V8m4 7v-5" /></svg>
+          学习工作台
+          <span className="ml-auto text-[10px] text-blue-400">v3</span>
         </button>
 
         <button onClick={() => { setSideSection('todo'); clearFilterTags(); }}
@@ -269,6 +304,12 @@ export const Sidebar: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
           任务统计
+        </button>
+
+        <button onClick={() => setShowKanban(true)}
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50/70 dark:hover:bg-emerald-900/10 transition-all">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M4 5h16v14H4zM10 5v14M4 10h16" /></svg>
+          看板视图
         </button>
 
         {todoNotes.length > 0 && (
@@ -342,11 +383,11 @@ export const Sidebar: React.FC = () => {
       <div className="mx-3 border-t border-rose-100/40 dark:border-gray-800" />
 
       {/* 便签列表 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="sidebar-list flex-1 overflow-y-auto">
         {filteredNotes.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-gray-300 dark:text-gray-600 px-6">
             <p className="text-sm text-center">
-              {sideSection === 'archived' ? t.noArchived : sideSection === 'todo' ? t.noTodo : sideSection === 'trash' ? '回收站为空' : t.noNotes}
+              {sideSection === 'archived' ? t.noArchived : sideSection === 'todo' ? t.noTodo : sideSection === 'canvas' ? '还没有画布' : sideSection === 'trash' ? '回收站为空' : t.noNotes}
             </p>
           </div>
         ) : (
@@ -359,10 +400,12 @@ export const Sidebar: React.FC = () => {
             )}
             {filteredNotes.map((note) => {
               const isTodo = note.noteType === 'todo' || note.isTodayPlan;
+              const isCanvas = note.noteType === 'canvas';
               const allCompleted = isTodo && note.content.trim() && extractTasks(note.content).length > 0 && extractTasks(note.content).every(t => t.checked);
               return (
-              <div key={note.id} onClick={() => setActiveNoteId(note.id)}
-                className={`group relative p-3 rounded-xl cursor-pointer transition-all duration-200 ${activeNoteId === note.id
+              <div key={note.id} onClick={() => setActiveNoteId(note.id)} draggable={sideSection !== 'trash'}
+                onDragStart={(event) => { event.dataTransfer.setData('application/x-muyujian-note', note.id); event.dataTransfer.effectAllowed = 'copy'; }}
+                className={`sidebar-note-card group relative p-3 rounded-xl cursor-pointer transition-all duration-200 ${activeNoteId === note.id
                   ? 'bg-white dark:bg-gray-800 shadow-md shadow-rose-100/50 dark:shadow-gray-900/50 border border-rose-200/60 dark:border-gray-700'
                   : allCompleted
                     ? 'bg-gray-50/80 dark:bg-gray-800/20 border border-transparent opacity-60'
@@ -379,6 +422,7 @@ export const Sidebar: React.FC = () => {
                       return isPinnedHere ? <span className="text-rose-400 mr-1">📌</span> : null;
                     })()}
                     {note.isTodayPlan && <span className="text-amber-400 mr-1">☆</span>}
+                    {isCanvas && <span className="text-indigo-400 mr-1">▦</span>}
                     {searchQuery ? (() => {
                       const q = searchQuery.toLowerCase();
                       const idx = note.title.toLowerCase().indexOf(q);
@@ -438,16 +482,16 @@ export const Sidebar: React.FC = () => {
                         </button>
                       );
                     })()}
-                    <button onClick={(e) => { e.stopPropagation(); updateNote(note.id, { isTodayPlan: !note.isTodayPlan }); }}
+                    {!isCanvas && <button onClick={(e) => { e.stopPropagation(); updateNote(note.id, { isTodayPlan: !note.isTodayPlan }); }}
                       className={`p-1.5 rounded-lg transition-all ${note.isTodayPlan
                         ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20'
                         : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'}`}
-                      title={note.isTodayPlan ? t.cancelTodayPlan : t.setTodayPlan}>☆</button>
-                    <button onClick={(e) => { e.stopPropagation(); setShowDeadlinePicker(showDeadlinePicker === note.id ? null : note.id); }}
+                      title={note.isTodayPlan ? t.cancelTodayPlan : t.setTodayPlan}>☆</button>}
+                    {!isCanvas && <button onClick={(e) => { e.stopPropagation(); setShowDeadlinePicker(showDeadlinePicker === note.id ? null : note.id); }}
                       className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all"
                       title={t.setDeadline}>
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                    </button>
+                    </button>}
                     <button onClick={(e) => { e.stopPropagation(); setShowTagInput(showTagInput === note.id ? null : note.id); }}
                       className="p-1.5 rounded-lg text-gray-300 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all"
                       title={t.addTag}>
@@ -472,6 +516,7 @@ export const Sidebar: React.FC = () => {
                 {note.content && (
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 line-clamp-1 leading-relaxed">{getSummary(note.content)}</p>
                 )}
+                {isCanvas && <p className="text-xs text-indigo-400/80 dark:text-indigo-300/70 mt-0.5 leading-relaxed">无限画布 · {note.canvasItems?.length || 0} 个元素</p>}
 
                 {/* 标签 */}
                 {note.tags.length > 0 && (

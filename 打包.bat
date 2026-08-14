@@ -1,7 +1,8 @@
 @echo off
+setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 cd /d "%~dp0"
-title 暮雨笺 - 打包
+title 暮雨笺 v3.0.0 - 发布打包
 
 :: 检查 Node.js 是否可用
 where node >nul 2>nul
@@ -26,7 +27,20 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [1/2] 正在构建...
+if not exist "node_modules" (
+    echo [1/3] 正在安装锁定依赖...
+    call npm ci
+    if errorlevel 1 (
+        echo.
+        echo [错误] 依赖安装失败
+        pause
+        exit /b 1
+    )
+) else (
+    echo [1/3] 已检测到本地依赖，跳过安装。
+)
+
+echo [2/3] 正在构建生产文件...
 call npm run build
 if %errorlevel% neq 0 (
     echo.
@@ -36,16 +50,20 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/2] 正在打包为 exe 安装包...
-call npx electron-builder --win --publish never
+echo [3/3] 正在生成 v3.0.0 安装包...
+if exist "release-temp" rmdir /s /q "release-temp"
+call npx electron-builder --win --publish never --config.directories.output=release-temp
 if %errorlevel% neq 0 (
     echo.
-    echo [错误] 打包失败
+    echo [错误] 打包失败，已保留原 release 文件夹。
     pause
     exit /b 1
 )
+if exist "release" rmdir /s /q "release"
+move "release-temp" "release" >nul
 
 echo.
-echo 打包完成！安装包在 release 文件夹中
+echo 打包完成！release 文件夹仅保留本次生成的发布版本。
 explorer release
 pause
+endlocal

@@ -1,0 +1,9 @@
+{
+  "format": "muyujian-workspace/v1",
+  "createdAt": "2026-08-14T09:00:00.000Z",
+  "entries": [
+    { "path": "workspace.json", "size": 4096, "sha256": "example-sha256-workspace" },
+    { "path": "notes.json", "size": 8192, "sha256": "example-sha256-notes" },
+    { "path": "attachments/example.png", "size": 102400, "sha256": "example-sha256-attachment" }
+  ]
+}
