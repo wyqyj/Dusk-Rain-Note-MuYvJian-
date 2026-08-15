@@ -1,6 +1,6 @@
 {
   "name": "muyujian",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "暮雨笺：本地优先的笔记与考研学习工作台",
   "repository": {
     "type": "git",
@@ -23,6 +23,7 @@
     "dist": "npm run build && electron-builder --win --publish never"
   },
   "dependencies": {
+    "@codemirror/commands": "6.0.0",
     "@codemirror/lang-markdown": "^6.3.1",
     "@codemirror/language": "^6.10.8",
     "@codemirror/language-data": "^6.5.2",
@@ -41,7 +42,8 @@
     "react-datepicker": "^7.6.0",
     "react-dom": "^18.3.1",
     "recharts": "^3.8.1",
-    "zustand": "^5.0.3"
+    "zustand": "^5.0.3",
+    "date-fns": "3.3.1"
   },
   "devDependencies": {
     "@types/katex": "^0.16.7",

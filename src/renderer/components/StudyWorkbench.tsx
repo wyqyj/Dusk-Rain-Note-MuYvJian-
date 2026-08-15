@@ -15,7 +15,7 @@ type Task = { id: string; title: string; subject: Subject; date: string; complet
 type FocusRecord = { id: string; taskName: string; subject: Subject; date: string; minutes: number; completed: boolean };
 type Book = { id: string; title: string; author: string; shelf: string; sourcePath?: string; originalPath?: string; progress: number; lastOpenedAt?: number; noteIds: string[]; questionBookIds: string[] };
 type Question = { id: string; chapter: string; number: string; status: 'correct' | 'wrong'; prompt: string; answer: string; mine?: string; reason?: string; mastery: Mastery; passed: boolean; tags: string[] };
-type QuestionBook = { id: string; title: string; volume: string; subject: Subject; sourcePath?: string; originalPath?: string; canvasId?: string; questions: Question[]; overrides: Record<string, Pick<Question, 'mastery' | 'passed' | 'tags'>> };
+type QuestionBook = { id: string; title: string; volume: string; subject: Subject; sourcePath?: string; originalPath?: string; sourcePaths?: string[]; originalPaths?: string[]; canvasId?: string; questions: Question[]; overrides: Record<string, Pick<Question, 'mastery' | 'passed' | 'tags'>> };
 type Workspace = { version: 3; examDate: string; phases: { name: string; start: string; end: string }[]; tasks: Task[]; focusRecords: FocusRecord[]; shelves: string[]; books: Book[]; questionBooks: QuestionBook[]; checkins: string[]; customTags: string[] };
 
 const subjects: Subject[] = ['政治', '英语', '数学', '业务课'];
@@ -46,11 +46,51 @@ const initialWorkspace = (): Workspace => ({
   checkins: [dateOffset(-1), dateOffset(-2), dateOffset(-4), dateOffset(-5), dateOffset(-8), dateOffset(-11), dateOffset(-14), dateOffset(-18)], customTags: ['易错', '基础', '链式法则', '定积分'],
 });
 
+const uniquePaths = (...paths: (string | undefined)[]) => [...new Set(paths.filter((path): path is string => !!path))];
+const managedQuestionBookPaths = (book: QuestionBook) => uniquePaths(...(book.sourcePaths || []), book.sourcePath);
+const originalQuestionBookPaths = (book: QuestionBook) => uniquePaths(...(book.originalPaths || []), book.originalPath);
+const sharedPath = (left: string[], right: string[]) => left.some((path) => right.includes(path));
+const questionKey = (question: Question) => `${question.chapter}\u0000${question.number}`;
+
+function isSameQuestionBook(current: QuestionBook, incoming: QuestionBook) {
+  const namedTitle = current.title && current.title !== '未命名题册' && incoming.title && incoming.title !== '未命名题册';
+  return (namedTitle && current.title === incoming.title)
+    || sharedPath(managedQuestionBookPaths(current), managedQuestionBookPaths(incoming))
+    || sharedPath(originalQuestionBookPaths(current), originalQuestionBookPaths(incoming));
+}
+
+function mergeQuestionBookRecords(current: QuestionBook, incoming: QuestionBook): QuestionBook {
+  const sourcePaths = uniquePaths(...managedQuestionBookPaths(current), ...managedQuestionBookPaths(incoming));
+  const originalPaths = uniquePaths(...originalQuestionBookPaths(current), ...originalQuestionBookPaths(incoming));
+  const incomingByKey = new Map(incoming.questions.map((question) => [questionKey(question), question]));
+  const overrides: QuestionBook['overrides'] = { ...current.overrides };
+  const questions = current.questions.map((question) => {
+    const replacement = incomingByKey.get(questionKey(question));
+    if (!replacement) return question;
+    incomingByKey.delete(questionKey(question));
+    const override = current.overrides[question.id];
+    if (override) overrides[question.id] = override;
+    return { ...replacement, id: question.id, ...override };
+  });
+  for (const question of incomingByKey.values()) questions.push(question);
+  return { ...current, title: incoming.title || current.title, subject: incoming.subject || current.subject, sourcePath: sourcePaths[0], originalPath: originalPaths[0], sourcePaths, originalPaths, overrides, questions };
+}
+
+function groupQuestionBooks(questionBooks: QuestionBook[]): QuestionBook[] {
+  return questionBooks.reduce<QuestionBook[]>((grouped, book) => {
+    const normalized = { ...book, sourcePaths: managedQuestionBookPaths(book), originalPaths: originalQuestionBookPaths(book) };
+    const index = grouped.findIndex((candidate) => isSameQuestionBook(candidate, normalized));
+    if (index < 0) grouped.push(normalized);
+    else grouped[index] = mergeQuestionBookRecords(grouped[index], normalized);
+    return grouped;
+  }, []);
+}
+
 function normalizeWorkspace(value: unknown): Workspace {
   const base = initialWorkspace();
   if (!value || typeof value !== 'object') return base;
   const raw = value as Partial<Workspace>;
-  return { ...base, ...raw, phases: raw.phases?.length ? raw.phases : base.phases, tasks: Array.isArray(raw.tasks) ? raw.tasks : base.tasks, focusRecords: Array.isArray(raw.focusRecords) ? raw.focusRecords : [], shelves: raw.shelves?.length ? raw.shelves : base.shelves, books: Array.isArray(raw.books) ? raw.books : [], questionBooks: Array.isArray(raw.questionBooks) ? raw.questionBooks : base.questionBooks, checkins: Array.isArray(raw.checkins) ? raw.checkins : base.checkins, customTags: Array.isArray(raw.customTags) ? raw.customTags : base.customTags };
+  return { ...base, ...raw, phases: raw.phases?.length ? raw.phases : base.phases, tasks: Array.isArray(raw.tasks) ? raw.tasks : base.tasks, focusRecords: Array.isArray(raw.focusRecords) ? raw.focusRecords : [], shelves: raw.shelves?.length ? raw.shelves : base.shelves, books: Array.isArray(raw.books) ? raw.books : [], questionBooks: Array.isArray(raw.questionBooks) ? groupQuestionBooks(raw.questionBooks) : base.questionBooks, checkins: Array.isArray(raw.checkins) ? raw.checkins : base.checkins, customTags: Array.isArray(raw.customTags) ? raw.customTags : base.customTags };
 }
 
 function parseQuestionBook(markdown: string, sourcePath?: string): QuestionBook {
@@ -77,7 +117,7 @@ function parseQuestionBook(markdown: string, sourcePath?: string): QuestionBook 
     return { id: uid('question'), chapter: currentChapter, number: heading, status, prompt: normalizeMathMarkdown(section('题干')), answer: normalizeMathMarkdown(section('标准答案')), mine: normalizeMathMarkdown(section('我的答案')) || undefined, reason: normalizeMathMarkdown(section('错误原因')) || undefined, mastery: status === 'wrong' ? 1 : 4, passed: status === 'correct', tags: tagLine.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) };
   }).filter((question): question is Question => !!question);
   if (!questions.length) throw new Error('题册中没有可识别的 ## Q001 格式题目');
-  return { id: uid('book'), title: field('book') || '未命名题册', volume: field('volume') || '第一册', subject, sourcePath, questions, overrides: {} };
+  return { id: uid('book'), title: field('book') || '未命名题册', volume: field('volume') || '第一册', subject, sourcePath, sourcePaths: sourcePath ? [sourcePath] : [], questions, overrides: {} };
 }
 
 function buildQuestionCanvas(book: QuestionBook): Pick<Note, 'canvasItems' | 'canvasOutline'> {
@@ -137,7 +177,7 @@ export const StudyWorkbench: React.FC = () => {
   const [taskTitle, setTaskTitle] = useState(''); const [taskSubject, setTaskSubject] = useState<Subject>('数学');
   const [focusName, setFocusName] = useState('数学复习'); const [focusSubject, setFocusSubject] = useState<Subject>('数学'); const [focusLength, setFocusLength] = useState(25);
   const [activeFocus, setActiveFocus] = useState<{ remaining: number; started: number; paused: boolean } | null>(null);
-  const [selectedBook, setSelectedBook] = useState<string | null>(null); const [questionFilter, setQuestionFilter] = useState<'all' | 'wrong' | 'correct' | 'retry' | 'passed'>('all'); const [questionMode, setQuestionMode] = useState<'canvas' | 'reader'>('canvas');
+  const [selectedBook, setSelectedBook] = useState<string | null>(null); const [selectedChapter, setSelectedChapter] = useState<string | null>(null); const [questionFilter, setQuestionFilter] = useState<'all' | 'wrong' | 'correct' | 'retry' | 'passed'>('all'); const [questionMode, setQuestionMode] = useState<'canvas' | 'reader'>('canvas'); const questionPanelRef = useRef<HTMLElement | null>(null);
   const [bookTitle, setBookTitle] = useState(''); const [bookShelf, setBookShelf] = useState('数学'); const [manualPath, setManualPath] = useState('');
   const [newShelfName, setNewShelfName] = useState(''); const [editingBookId, setEditingBookId] = useState<string | null>(null); const [bookEditorPosition, setBookEditorPosition] = useState<{ left: number; top: number } | null>(null); const [pendingBookDeleteId, setPendingBookDeleteId] = useState<string | null>(null);
   const [skillInfo, setSkillInfo] = useState<{ directory?: string; skillPath?: string; promptPath?: string; prompt?: string } | null>(null);
@@ -159,6 +199,7 @@ export const StudyWorkbench: React.FC = () => {
   const weekFocus = workspace.focusRecords.filter((record) => record.date >= dateOffset(-6)).reduce((sum, record) => sum + record.minutes, 0);
   const currentPhase = workspace.phases.find((phase) => phase.start <= today() && phase.end >= today())?.name || '自定义阶段';
   const activeQuestionBook = workspace.questionBooks.find((book) => book.id === selectedBook) || workspace.questionBooks[0];
+  useEffect(() => { setSelectedChapter(null); }, [activeQuestionBook?.id]);
   const popoverBook = editingBookId ? workspace.books.find((book) => book.id === editingBookId) : undefined;
   const workbenchNotes = notes.filter((note) => note.noteType === 'note' && !note.isDeleted && !note.isArchived);
   const workbenchCanvases = notes.filter((note) => note.noteType === 'canvas' && !note.isDeleted && !note.isArchived);
@@ -167,7 +208,7 @@ export const StudyWorkbench: React.FC = () => {
   const syncQuestionCanvas = (book: QuestionBook): string => {
     const canvasId = book.canvasId || uid('question-canvas');
     const canvasBook = { ...book, canvasId };
-    const title = `${book.title} · ${book.volume} · 题册画布`;
+    const title = `${book.title} · ${new Set(book.questions.map((question) => question.chapter)).size} 个章节 · 题册画布`;
     const payload = buildQuestionCanvas(canvasBook);
     const existing = notes.find((note) => note.id === canvasId);
     if (existing) updateNote(canvasId, { title, tags: ['学习工作台', '题册画布', book.subject], isDeleted: false, deletedAt: undefined, ...payload });
@@ -238,30 +279,15 @@ export const StudyWorkbench: React.FC = () => {
     if (select) setSelectedBook(withCanvas.id);
     return withCanvas;
   };
-  const mergeQuestionBook = (current: QuestionBook, incoming: QuestionBook): QuestionBook => {
-    const overrides: QuestionBook['overrides'] = {};
-    const questions = incoming.questions.map((question) => {
-      const prior = current.questions.find((old) => old.number === question.number);
-      const override = prior ? current.overrides[prior.id] : undefined;
-      const id = prior?.id || question.id;
-      if (override) overrides[id] = override;
-      return { ...question, id, ...override };
-    });
-    return { ...incoming, id: current.id, canvasId: current.canvasId, overrides, questions };
-  };
+  const mergeQuestionBook = mergeQuestionBookRecords;
   const importQuestionBook = async () => {
     try {
       const result = await window.electronAPI?.chooseQuestionBook();
       if (!result?.content) return;
-      const incoming = { ...parseQuestionBook(result.content, result.folder), originalPath: result.originalFolder };
-      const duplicate = workspace.questionBooks.find((item) => item.title === incoming.title && item.volume === incoming.volume);
-      if (duplicate) {
-        const option = prompt('发现同名题册：输入 merge 按题号合并，输入 copy 创建副本，其它取消', 'merge');
-        if (option === 'merge') applyQuestionBook(mergeQuestionBook(duplicate, incoming), true);
-        else if (option === 'copy') applyQuestionBook(incoming, true);
-        else return;
-      } else applyQuestionBook(incoming, true);
-      setNotice('题册已导入为托管副本，并已同步生成题册画布与章节定位。');
+      const incoming = { ...parseQuestionBook(result.content, result.folder), originalPath: result.originalFolder, originalPaths: result.originalFolder ? [result.originalFolder] : [] };
+      const existing = workspace.questionBooks.find((item) => isSameQuestionBook(item, incoming));
+      applyQuestionBook(existing ? mergeQuestionBook(existing, incoming) : incoming, true);
+      setNotice(existing ? '已合并到同名题册，章节、题目和已有复习记录均已保留。' : '题册已导入为托管副本，并已同步生成题册画布与章节定位。');
     } catch (error: any) { alert(`导入失败：${error.message}`); }
   };
   const addManualQuestion = () => {
@@ -275,13 +301,17 @@ export const StudyWorkbench: React.FC = () => {
   };
   const refreshActiveBook = async () => {
     if (!activeQuestionBook) return;
-    if (!activeQuestionBook.sourcePath) { alert('此题册没有可刷新的托管目录。请先通过“导入题册 Markdown”导入。'); return; }
+    const sourcePaths = managedQuestionBookPaths(activeQuestionBook);
+    if (!sourcePaths.length) { alert('此题册没有可刷新的托管目录。请先通过“导入题册 Markdown”导入。'); return; }
     try {
-      const result = await window.electronAPI?.readQuestionBook(activeQuestionBook.sourcePath);
-      if (!result?.content) throw new Error(result?.error || '题册文件不存在');
-      const refreshed = mergeQuestionBook(activeQuestionBook, parseQuestionBook(result.content, result.folder));
+      let refreshed = activeQuestionBook;
+      for (const sourcePath of sourcePaths) {
+        const result = await window.electronAPI?.readQuestionBook(sourcePath);
+        if (!result?.content) throw new Error(result?.error || '题册文件不存在');
+        refreshed = mergeQuestionBook(refreshed, parseQuestionBook(result.content, result.folder));
+      }
       applyQuestionBook(refreshed);
-      setNotice('已读取此题册对应目录中的 questions.md，题册画布与章节索引已同步更新。');
+      setNotice(`已刷新 ${sourcePaths.length} 个题册章节文件，题册画布与章节索引已同步更新。`);
     } catch (error: any) { alert(`刷新失败：${error.message}`); }
   };
   const updateQuestion = (questionId: string, update: Partial<Question>) => {
@@ -300,11 +330,16 @@ export const StudyWorkbench: React.FC = () => {
 
   const filteredQuestions = activeQuestionBook?.questions.filter((question) => questionFilter === 'all' || question.status === questionFilter || (questionFilter === 'retry' && question.status === 'wrong' && question.mastery < 3 && !question.passed) || (questionFilter === 'passed' && question.passed)) || [];
   const chapters = [...new Set(activeQuestionBook?.questions.map((question) => question.chapter) || [])];
+  const activeChapter = selectedChapter && chapters.includes(selectedChapter) ? selectedChapter : chapters[0];
+  useEffect(() => {
+    if (view !== 'questions' || !activeChapter) return;
+    questionPanelRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [view, activeChapter]);
   const nav = [['overview', '总览'], ['plan', '规划'], ['focus', '专注'], ['books', '书架'], ['questions', '题册'], ['notes', '笔记'], ['canvas', '画布'], ['settings', '设置']] as const;
 
   if (!loaded) return <div className="study-loading">正在加载学习工作台…</div>;
   return <div className={`study-shell ${settings.wallpaper ? 'has-workspace-wallpaper' : ''}`} style={settings.wallpaper ? { backgroundImage: `linear-gradient(rgba(247,250,255,.56), rgba(247,250,255,.56)), url("${settings.wallpaper}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' } : undefined}>
-    <aside className="study-nav"><div className="study-brand"><span>暮雨笺</span><small>学习工作台</small></div>{nav.map(([id, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}>{label}</button>)}<div className="study-nav-foot">v3.0.1 · 本地优先</div></aside>
+    <aside className="study-nav"><div className="study-brand"><span>暮雨笺</span><small>学习工作台</small></div>{nav.map(([id, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}>{label}</button>)}<div className="study-nav-foot">v3.0.2 · 本地优先</div></aside>
     <main className="study-main">
       <header className="study-header"><div><h1>{nav.find(([id]) => id === view)?.[1]}</h1><p>{view === 'overview' ? '考研冲刺工作台' : '所有内容仅保存在本机工作台目录'}</p></div><div className="study-header-actions"><button onClick={() => window.electronAPI?.backupWorkspace().then((result) => setNotice(result?.success ? `已导出综合备份：${result.path}` : '已取消备份'))}>导出综合备份</button><button onClick={() => { if (confirm('恢复备份会覆盖同名工作台文件，继续？')) window.electronAPI?.restoreWorkspace().then((result) => { if (result?.success) window.location.reload(); else if (result?.error !== 'cancelled') alert(`恢复失败：${result?.error}`); }); }}>导入恢复</button></div></header>
       {workspace.tasks.length + workspace.books.length + workspace.questionBooks.length >= 30 && <div className="study-notice">工作台内容已超过 30 条，建议现在导出一次综合备份。<button onClick={() => setNotice('')}>×</button></div>}
@@ -318,10 +353,10 @@ export const StudyWorkbench: React.FC = () => {
       {view === 'focus' && <section className="study-page focus-page"><section className="focus-card"><span>{activeFocus?.paused ? '已暂停' : activeFocus ? '专注中' : '准备开始'}</span><strong>{String(Math.floor((activeFocus?.remaining ?? focusLength * 60) / 60)).padStart(2, '0')}:{String((activeFocus?.remaining ?? focusLength * 60) % 60).padStart(2, '0')}</strong><div className="focus-controls">{!activeFocus ? <button className="primary" onClick={() => setActiveFocus({ remaining: focusLength * 60, started: Date.now(), paused: false })}>开始计时</button> : <><button onClick={() => setActiveFocus({ ...activeFocus, paused: !activeFocus.paused })}>{activeFocus.paused ? '继续' : '暂停'}</button><button className="danger" onClick={finishFocus}>结束并记录</button></>}</div></section><section className="panel"><h2>专注设置</h2><div className="inline-form"><input value={focusName} onChange={(event) => setFocusName(event.target.value)} placeholder="当前任务名称" /><select value={focusSubject} onChange={(event) => setFocusSubject(event.target.value as Subject)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select><input type="number" min="1" max="240" value={focusLength} onChange={(event) => setFocusLength(Number(event.target.value) || 25)} /></div><p className="muted">默认 25 分钟；完成时发送 Windows 通知。休息建议：短休 5 分钟，长休 15 分钟。</p></section><section className="study-grid two"><section className="panel"><h2>学习统计</h2><div className="big-number">{formatDuration(totalFocus)}<small>累计学习时长</small></div>{subjects.map((subject) => { const minutes = workspace.focusRecords.filter((record) => record.subject === subject).reduce((sum, record) => sum + record.minutes, 0); return <div className="bar-row" key={subject}><span>{subject}</span><i><b style={{ width: `${totalFocus ? minutes / totalFocus * 100 : 0}%` }} /></i><small>{formatDuration(minutes)}</small></div>; })}</section><section className="panel"><h2>打卡图片</h2><p className="muted">包含日期、任务完成数、学习时长与完成环。</p><button className="primary" onClick={exportCheckin}>导出今日打卡图片</button></section></section></section>}
       {view === 'books' && <section className="study-page"><section className="panel"><div className="panel-heading"><h2>我的书架</h2><span className="muted">点击书本或“编辑”可在卡片旁展开管理面板。</span></div><div className="book-form"><input value={bookTitle} onChange={(event) => setBookTitle(event.target.value)} placeholder="书名" /><select value={bookShelf} onChange={(event) => setBookShelf(event.target.value)}>{workspace.shelves.map((shelf) => <option key={shelf}>{shelf}</option>)}</select><input value={manualPath} onChange={(event) => setManualPath(event.target.value)} placeholder="本地绝对路径（可选）" /><button onClick={() => addBook()}>添加书本</button><button onClick={importBook}>选择文件导入</button></div><div className="shelf-create-form"><input value={newShelfName} onChange={(event) => setNewShelfName(event.target.value)} placeholder="新书架分组名称" onKeyDown={(event) => { if (event.key === 'Enter') addShelf(); }} /><button onClick={addShelf}>新建书架分组</button></div></section>{workspace.shelves.map((shelf) => <section className="shelf" key={shelf}><div className="shelf-heading"><h2>{shelf}</h2><span>{workspace.books.filter((book) => book.shelf === shelf).length} 本</span></div><div className="book-grid">{workspace.books.filter((book) => book.shelf === shelf).map((book) => <article className={`book-card ${editingBookId === book.id ? 'active' : ''}`} key={book.id} tabIndex={0} role="button" aria-label={`编辑书本 ${book.title}`} onClick={(event) => openBookEditor(book.id, event.currentTarget)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openBookEditor(book.id, event.currentTarget); } }}><div className="book-cover">{book.title.slice(0, 1)}</div><strong>{book.title}</strong><span>{book.author || '未填写作者'}</span><progress value={book.progress} max="100" /><small>{book.progress}% · {book.lastOpenedAt ? '最近打开' : '未打开'}</small><div className="book-card-actions" onClick={(event) => event.stopPropagation()}><button onClick={() => updateBook(book.id, { progress: Math.min(100, book.progress + 10) })}>进度 +10%</button><button onClick={(event) => editingBookId === book.id ? closeBookEditor() : openBookEditor(book.id, event.currentTarget)}>编辑</button>{book.sourcePath && <button onClick={() => { window.electronAPI?.openWorkspacePath(book.sourcePath!); updateBook(book.id, { lastOpenedAt: Date.now() }); }}>系统打开</button>}</div></article>)}<button className="book-add" onClick={() => createBookInShelf(shelf)} title={`在${shelf}中新建书本`} aria-label={`在${shelf}中新建书本`}>+</button></div></section>)}{popoverBook && bookEditorPosition && <BookEditorPopover book={popoverBook} shelves={workspace.shelves} position={bookEditorPosition} pendingDelete={pendingBookDeleteId === popoverBook.id} onClose={closeBookEditor} onUpdate={(changes) => updateBook(popoverBook.id, changes)} onRequestDelete={() => setPendingBookDeleteId(popoverBook.id)} onDelete={() => deleteBook(popoverBook.id)} />}</section>}
       {view === 'questions' && <section className="study-page question-page">
-        <section className="panel question-toolbar"><div><h2>题册与错题整理</h2><select value={activeQuestionBook?.id || ''} onChange={(event) => setSelectedBook(event.target.value)}>{workspace.questionBooks.map((book) => <option value={book.id} key={book.id}>{book.title} · {book.volume}</option>)}</select></div><div><button onClick={importQuestionBook}>导入题册 Markdown</button><button onClick={addManualQuestion}>手动添加错题</button><button onClick={refreshActiveBook}>刷新整理文件</button><button onClick={openQuestionCanvas}>打开题册画布</button><button onClick={() => setQuestionMode(questionMode === 'canvas' ? 'reader' : 'canvas')}>{questionMode === 'canvas' ? '连续阅读' : '画布式阅读'}</button></div></section>
-        <div className="question-layout"><aside className="question-tree"><b>{activeQuestionBook?.title}</b>{chapters.map((chapter) => <button key={chapter} onClick={() => document.getElementById(`chapter-${chapter}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{chapter}<small>{activeQuestionBook?.questions.filter((question) => question.chapter === chapter).length}</small></button>)}</aside>
-          <section className={questionMode === 'canvas' ? 'question-canvas' : 'question-reader'}><div className="question-filters">{([['all', '全部'], ['wrong', '错误题'], ['correct', '正确题'], ['retry', '待重做'], ['passed', '已通过']] as const).map(([id, label]) => <button className={questionFilter === id ? 'active' : ''} onClick={() => setQuestionFilter(id)} key={id}>{label}</button>)}</div>
-            {chapters.map((chapter) => <div id={`chapter-${chapter}`} className="question-chapter" key={chapter}><h2>{chapter}</h2><div className="question-cards">{filteredQuestions.filter((question) => question.chapter === chapter).map((question) => <article className="question-card" key={question.id}><div className="question-tags">{question.status === 'wrong' ? <span className="wrong">错误题</span> : <span className="correct">正确题</span>}{question.tags.map((tag) => <button key={tag} onClick={() => exportTagBook(tag)} title="导出此标签题册">{tag}</button>)}<button onClick={() => addQuestionTag(question)} title="添加重点标签">+标签</button></div><h3>{question.number}</h3><MarkdownContent className="question-prompt" source={question.prompt || '未提供题干'} /><details><summary>查看标准答案</summary><MarkdownContent className="question-answer" source={question.answer || '未提供标准答案'} />{question.mine && <><b>我的答案：</b><MarkdownContent className="question-answer" source={question.mine} /></>}{question.reason && <><b>错误原因：</b><MarkdownContent className="question-answer" source={question.reason} /></>}</details><div className="question-footer"><span>{Array.from({ length: 5 }, (_, star) => <button className={star < question.mastery ? 'star on' : 'star'} key={star} onClick={() => updateQuestion(question.id, { mastery: (star + 1) as Mastery })}>★</button>)}</span>{question.status === 'wrong' && <button onClick={() => updateQuestion(question.id, { passed: !question.passed, mastery: question.passed ? question.mastery : Math.min(5, question.mastery + 1) as Mastery })}>{question.passed ? '取消通过' : '已重做并通过'}</button>}</div></article>)}</div></div>)}
+        <section className="panel question-toolbar"><div><h2>题册与错题整理</h2><select value={activeQuestionBook?.id || ''} onChange={(event) => setSelectedBook(event.target.value)}>{workspace.questionBooks.map((book) => <option value={book.id} key={book.id}>{book.title} · {new Set(book.questions.map((question) => question.chapter)).size} 个章节</option>)}</select></div><div><button onClick={importQuestionBook}>导入题册 Markdown</button><button onClick={addManualQuestion}>手动添加错题</button><button onClick={refreshActiveBook}>刷新整理文件</button><button onClick={openQuestionCanvas}>打开题册画布</button><button onClick={() => setQuestionMode(questionMode === 'canvas' ? 'reader' : 'canvas')}>{questionMode === 'canvas' ? '连续阅读' : '画布式阅读'}</button></div></section>
+        <div className="question-layout"><aside className="question-tree" aria-label="章节目录"><b>{activeQuestionBook?.title}</b>{chapters.map((chapter) => <button key={chapter} className={activeChapter === chapter ? 'active' : ''} aria-current={activeChapter === chapter ? 'page' : undefined} onClick={() => setSelectedChapter(chapter)}>{chapter}<small>{activeQuestionBook?.questions.filter((question) => question.chapter === chapter).length}</small></button>)}</aside>
+          <section ref={questionPanelRef} className={questionMode === 'canvas' ? 'question-canvas' : 'question-reader'} aria-live="polite"><div className="question-filters">{([['all', '全部'], ['wrong', '错误题'], ['correct', '正确题'], ['retry', '待重做'], ['passed', '已通过']] as const).map(([id, label]) => <button className={questionFilter === id ? 'active' : ''} onClick={() => setQuestionFilter(id)} key={id}>{label}</button>)}</div>
+            {activeChapter && <div className="question-chapter" key={activeChapter}><h2>{activeChapter}</h2><div className="question-cards">{filteredQuestions.filter((question) => question.chapter === activeChapter).map((question) => <article className="question-card" key={question.id}><div className="question-tags">{question.status === 'wrong' ? <span className="wrong">错误题</span> : <span className="correct">正确题</span>}{question.tags.map((tag) => <button key={tag} onClick={() => exportTagBook(tag)} title="导出此标签题册">{tag}</button>)}<button onClick={() => addQuestionTag(question)} title="添加重点标签">+标签</button></div><h3>{question.number}</h3><MarkdownContent className="question-prompt" source={question.prompt || '未提供题干'} /><details><summary>查看标准答案</summary><MarkdownContent className="question-answer" source={question.answer || '未提供标准答案'} />{question.mine && <><b>我的答案：</b><MarkdownContent className="question-answer" source={question.mine} /></>}{question.reason && <><b>错误原因：</b><MarkdownContent className="question-answer" source={question.reason} /></>}</details><div className="question-footer"><span>{Array.from({ length: 5 }, (_, star) => <button className={star < question.mastery ? 'star on' : 'star'} key={star} onClick={() => updateQuestion(question.id, { mastery: (star + 1) as Mastery })}>★</button>)}</span>{question.status === 'wrong' && <button onClick={() => updateQuestion(question.id, { passed: !question.passed, mastery: question.passed ? question.mastery : Math.min(5, question.mastery + 1) as Mastery })}>{question.passed ? '取消通过' : '已重做并通过'}</button>}</div></article>)}</div></div>}
           </section>
         </div>
       </section>}
