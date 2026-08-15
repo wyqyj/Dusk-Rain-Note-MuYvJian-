@@ -10,13 +10,13 @@ Prepare only importable Markdown. Do not invoke an external AI service from the 
 ## Required Workflow
 
 1. Read the format reference before creating or revising a question book.
-2. Preserve the question order from the source and assign zero-padded IDs such as `Q001`.
-3. Put every question under one `# 章节` heading and one `## Q编号` heading.
+2. Preserve the question order from the source and assign zero-padded IDs such as `Q001`. Split separately numbered source questions into separate IDs; never combine two questions under one ID.
+3. Put every question under one `# 章节` heading and one `## Q编号` heading. Each `## Q编号` block represents exactly one question for one-at-a-time review.
 4. Set `状态: correct` only when the original attempt is correct. Set `状态: wrong` for incorrect, incomplete, uncertain, or missing attempts.
 5. Include `### 题干` and `### 标准答案` for every question. Never invent a standard answer. State uncertainty in `### 错误原因` when evidence is incomplete.
-6. Preserve formulas as LaTex-compatible Markdown and retain image references as relative paths under `source/`.
+6. Write inline formulas as `$...$` and display formulas as `$$...$$`. Convert formula-like Markdown inline code such as `` `x^2` `` to formula delimiters; never wrap formulas in backticks. Retain image references as relative paths under `source/`.
 7. Use one concise tag line. Tags describe concepts or review priorities, not duplicate status.
-8. Validate required fields and headings before returning the result. Return the final folder layout and the complete `questions.md`, without explanatory prose inside the file.
+8. Validate required fields, headings, question boundaries, and formula delimiters before returning the result. Return the final folder layout and the complete `questions.md`, without explanatory prose inside the file.
 
 ## Classification Rules
 

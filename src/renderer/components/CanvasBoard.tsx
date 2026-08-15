@@ -5,7 +5,7 @@ import { Preview } from './Preview';
 import { VersionHistory } from './VersionHistory';
 import { useAttachmentStore } from '../store/attachmentStore';
 import { CanvasItem, CanvasLink, Note, useNoteStore } from '../store/noteStore';
-import { generateId } from '../utils/markdown';
+import { generateId, renderMarkdown } from '../utils/markdown';
 
 type Camera = { x: number; y: number; scale: number };
 type Interaction =
@@ -74,6 +74,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [copiedItem, setCopiedItem] = useState<CanvasItem | null>(null);
   const [previewRatio, setPreviewRatio] = useState(60);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
 
   const defaultPosition = () => {
     const index = itemsRef.current.length;
@@ -100,6 +101,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
     setItems(next);
     setLinks(note.canvasLinks || []);
     setSelectedId(null);
+    setEditingTextId(null);
     setInspectorNoteId(null);
     const frame = window.requestAnimationFrame(() => fitCanvas(next));
     return () => window.cancelAnimationFrame(frame);
@@ -344,7 +346,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
             const linkedNote = item.type === 'note' ? notes.find((entry) => entry.id === item.content) : undefined;
             const imageSource = item.attachmentId ? attachments.find((attachment) => attachment.id === item.attachmentId)?.dataUrl || item.content : item.content;
             return <div key={item.id} data-canvas-item className={`canvas-item ${item.type} ${selectedId === item.id ? 'selected' : ''} ${connectorFrom === item.id ? 'link-source' : ''}`} style={{ transform: `translate(${item.x}px, ${item.y}px)`, width: item.width, height: itemHeight(item) }} onPointerDown={(event) => handleItemPointerDown(event, item)} onContextMenu={(event) => handleContextMenu(event, item)} onDoubleClick={(event) => { if (item.type === 'note' && linkedNote) openNoteInspector(item, linkedNote); else if (!(event.target instanceof HTMLTextAreaElement)) focusItem(item); }}>
-              {item.type === 'image' ? <img src={imageSource} alt="画布图片" draggable={false} /> : item.type === 'note' ? <button className="canvas-note-card" onDoubleClick={(event) => { event.stopPropagation(); if (linkedNote) openNoteInspector(item, linkedNote); }}><span>{linkedNote?.noteType === 'todo' ? '待办' : '笔记'}</span><strong>{linkedNote?.title || '已删除的笔记'}</strong><p>{linkedNote?.content.replace(/[#*\[\]`~>_-]/g, '').replace(/\n+/g, ' ').slice(0, 72) || '双击在右侧打开笔记'}</p></button> : <textarea value={item.content} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => { event.stopPropagation(); focusItem(item); }} onChange={(event) => updateItem(item.id, { content: event.target.value })} style={{ color: item.color || '#1e293b' }} aria-label="画布文本" />}
+              {item.type === 'image' ? <img src={imageSource} alt="画布图片" draggable={false} /> : item.type === 'note' ? <button className="canvas-note-card" onDoubleClick={(event) => { event.stopPropagation(); if (linkedNote) openNoteInspector(item, linkedNote); }}><span>{linkedNote?.noteType === 'todo' ? '待办' : '笔记'}</span><strong>{linkedNote?.title || '已删除的笔记'}</strong><p>{linkedNote?.content.replace(/[#*\[\]`~>_-]/g, '').replace(/\n+/g, ' ').slice(0, 72) || '双击在右侧打开笔记'}</p></button> : editingTextId === item.id ? <textarea autoFocus value={item.content} onPointerDown={(event) => event.stopPropagation()} onBlur={() => setEditingTextId(null)} onChange={(event) => updateItem(item.id, { content: event.target.value })} style={{ color: item.color || '#1e293b' }} aria-label="编辑画布文本" /> : <div className="canvas-text-preview" style={{ color: item.color || '#1e293b' }} onDoubleClick={(event) => { event.stopPropagation(); setEditingTextId(item.id); }} dangerouslySetInnerHTML={{ __html: renderMarkdown(item.content) }} />}
               {selectedId === item.id && <><div className="canvas-item-handle" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => resizeSelected('width', -24)} title="缩窄">←</button><button onClick={() => resizeSelected('width', 24)} title="加宽">→</button><button onClick={() => resizeSelected('height', -20)} title="降低">↓</button><button onClick={() => resizeSelected('height', 20)} title="增高">↑</button><button onClick={() => focusItem(item)} title="居中适配">◎</button>{item.type === 'note' && linkedNote && <button onClick={() => openNoteInspector(item, linkedNote)} title="打开关联笔记">□</button>}</div><button className="canvas-resize-handle" onPointerDown={(event) => handleResizePointerDown(event, item)} aria-label="拖拽调整元素宽高" title="拖拽调整大小" /></>}
             </div>;
           })}

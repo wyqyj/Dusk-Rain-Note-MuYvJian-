@@ -62,6 +62,7 @@ $0$
 - `标签` is optional and contains comma- or Chinese-comma-separated text.
 - Store all linked image and attachment files below the same folder, preferably in `source/`.
 - Do not use HTML tables, absolute paths, or duplicate `Q` IDs.
+- Write formulas with `$...$` for inline math or `$$...$$` for display math. Do not wrap formulas in Markdown backticks.
 
 ## Review Checklist
 

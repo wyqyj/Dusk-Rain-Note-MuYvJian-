@@ -417,13 +417,28 @@ function preprocessWikiLinks(text: string): string {
   });
 }
 
+/** Accept math written as inline code by older question-book examples. */
+export function normalizeMathMarkdown(text: string): string {
+  const codeNormalized = text.replace(/`([^`\n]+)`/g, (source, raw: string) => {
+    const expression = raw.trim();
+    const looksLikeMath = /^[-+]?\d+(?:\.\d+)?$/.test(expression)
+      || /\\[a-zA-Z]+|[=^_]|->|[<>≤≥±×÷∫∑∏√∞]|(?:^|\s)(?:lim|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt)\b/.test(expression);
+    if (!looksLikeMath) return source;
+    return `$${expression.replace(/->/g, '\\to')}$`;
+  });
+  return codeNormalized
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$\n${math.trim()}\n$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`);
+}
+
 export function renderMarkdown(text: string): string {
-  if (isLatexDocument(text)) {
-    const { text: mathRendered } = preRenderMath(text);
+  const normalized = normalizeMathMarkdown(text);
+  if (isLatexDocument(normalized)) {
+    const { text: mathRendered } = preRenderMath(normalized);
     const structured = preprocessLatexStructure(mathRendered);
     return md.render(preprocessWikiLinks(structured));
   }
-  return md.render(preprocessWikiLinks(text));
+  return md.render(preprocessWikiLinks(normalized));
 }
 
 export function toggleTaskCheckbox(source: string, lineIndex: number, checked: boolean): string {
