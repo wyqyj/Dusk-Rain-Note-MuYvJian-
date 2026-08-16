@@ -59,7 +59,12 @@ declare module 'electron' {
 
   export const Menu: any;
   export const Tray: any;
-  export const nativeImage: any;
+  export const nativeImage: {
+    createThumbnailFromPath(path: string, size: { width: number; height: number }): Promise<{
+      isEmpty(): boolean;
+      toPNG(): Buffer;
+    }>;
+  };
   export const shell: any;
   export const dialog: any;
 }

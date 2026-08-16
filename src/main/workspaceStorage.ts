@@ -1,4 +1,4 @@
-import { app, dialog, BrowserWindow } from 'electron';
+import { app, dialog, BrowserWindow, nativeImage } from 'electron';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -170,16 +170,50 @@ export class WorkspaceStorage {
     } catch (error: any) { return { success: false, error: error.message }; }
   }
 
-  async chooseBookFile(parent: BrowserWindow | null): Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string }> {
-    const options = { title: '导入书籍', properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[], filters: [{ name: '书籍文件', extensions: ['pdf', 'epub', 'mobi', 'azw3', 'docx', 'txt'] }, { name: '所有文件', extensions: ['*'] }] };
+  private isManagedBookPath(sourcePath: string): boolean {
+    try {
+      const booksRoot = fs.realpathSync(path.resolve(this.root, 'books'));
+      const target = fs.realpathSync(path.resolve(sourcePath));
+      return target.startsWith(`${booksRoot}${path.sep}`);
+    } catch {
+      return false;
+    }
+  }
+
+  private async createBookCover(sourcePath: string): Promise<string> {
+    if (!this.isManagedBookPath(sourcePath)) throw new Error('书籍文件不属于当前学习工作台');
+    const source = path.resolve(sourcePath);
+    if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('书籍文件不存在或不是有效文件');
+
+    const thumbnail = await nativeImage.createThumbnailFromPath(source, { width: 360, height: 480 });
+    if (thumbnail.isEmpty()) throw new Error('系统无法为该文件生成缩略图');
+
+    const coverPath = path.join(path.dirname(source), 'cover.png');
+    fs.writeFileSync(coverPath, thumbnail.toPNG());
+    return coverPath;
+  }
+
+  async generateBookCover(sourcePath: string): Promise<{ success: boolean; coverPath?: string; error?: string }> {
+    try {
+      return { success: true, coverPath: await this.createBookCover(sourcePath) };
+    } catch (error: any) {
+      return { success: false, error: error.message || '生成书籍封面失败' };
+    }
+  }
+
+  async chooseBookFile(parent: BrowserWindow | null): Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string; coverPath?: string; coverError?: string }> {
+    const options = { title: '导入书籍', properties: ['openFile'] as ('openFile')[], filters: [{ name: '书籍文件', extensions: ['pdf', 'epub', 'mobi', 'azw3', 'docx', 'txt'] }, { name: '所有文件', extensions: ['*'] }] };
     const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
+
     const originalPath = result.filePaths[0];
     const name = path.basename(originalPath);
-    const managedDirectory = path.join(this.root, 'books', `${Date.now()}-${name.replace(/[<>:"/\\|?*]/g, '_')}`);
+    const managedDirectory = path.join(this.root, 'books', `${Date.now()}-${crypto.randomUUID()}-${name.replace(/[<>:"/\\|?*]/g, '_')}`);
     fs.mkdirSync(managedDirectory, { recursive: true });
     const managedPath = path.join(managedDirectory, name);
     fs.copyFileSync(originalPath, managedPath);
-    return { path: managedPath, originalPath, name };
+
+    const cover = await this.generateBookCover(managedPath);
+    return { path: managedPath, originalPath, name, coverPath: cover.coverPath, coverError: cover.error };
   }
 }

@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseQuestionBook: () => ipcRenderer.invoke('workspace-choose-question-book'),
   readQuestionBook: (folder: string) => ipcRenderer.invoke('workspace-read-question-book', folder),
   chooseBook: () => ipcRenderer.invoke('workspace-choose-book'),
+  generateBookCover: (sourcePath: string) => ipcRenderer.invoke('workspace-generate-book-cover', sourcePath),
   openWorkspacePath: (target: string) => ipcRenderer.invoke('workspace-open-path', target),
   openWorkspaceExamples: () => ipcRenderer.invoke('workspace-open-examples'),
   getQuestionBookSkill: () => ipcRenderer.invoke('workspace-question-book-skill'),

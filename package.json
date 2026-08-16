@@ -1,6 +1,6 @@
 {
   "name": "muyujian",
-  "version": "3.0.2",
+  "version": "3.0.4",
   "description": "暮雨笺：本地优先的笔记与考研学习工作台",
   "repository": {
     "type": "git",
@@ -68,7 +68,7 @@
       "output": "release"
     },
     "artifactName": "${productName}-Setup-${version}.${ext}",
-    "electronDist": "node_modules/electron/dist",
+    "electronDist": "electron-dist-local",
     "files": [
       "dist/**/*",
       "package.json"

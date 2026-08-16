@@ -55,7 +55,8 @@ interface ElectronAPI {
   restoreWorkspace: () => Promise<{ success: boolean; error?: string; files?: number }>;
   chooseQuestionBook: () => Promise<{ canceled?: boolean; folder?: string; originalFolder?: string; content?: string }>;
   readQuestionBook: (folder: string) => Promise<{ success: boolean; folder?: string; content?: string; error?: string }>;
-  chooseBook: () => Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string }>;
+  chooseBook: () => Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string; coverPath?: string; coverError?: string }>;
+  generateBookCover: (sourcePath: string) => Promise<{ success: boolean; coverPath?: string; error?: string }>;
   openWorkspacePath: (target: string) => Promise<string>;
   openWorkspaceExamples: () => Promise<{ success: boolean; path?: string; error?: string }>;
   getQuestionBookSkill: () => Promise<{ success: boolean; directory?: string; skillPath?: string; promptPath?: string; prompt?: string; error?: string }>;

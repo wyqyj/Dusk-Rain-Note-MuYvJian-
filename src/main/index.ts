@@ -328,6 +328,10 @@ function setupIPC(): void {
   ipcMain.handle('workspace-choose-question-book', () => workspaceStorage.chooseQuestionBook(BrowserWindow.getFocusedWindow()));
   ipcMain.handle('workspace-read-question-book', (_e: any, folder: string) => workspaceStorage.readQuestionBook(folder));
   ipcMain.handle('workspace-choose-book', () => workspaceStorage.chooseBookFile(BrowserWindow.getFocusedWindow()));
+  ipcMain.handle('workspace-generate-book-cover', (_e: any, sourcePath: unknown) => {
+    if (typeof sourcePath !== 'string' || !sourcePath) return { success: false, error: '书籍路径无效' };
+    return workspaceStorage.generateBookCover(sourcePath);
+  });
   ipcMain.handle('workspace-open-path', (_e: any, target: string) => shell.openPath(target));
   ipcMain.handle('workspace-open-examples', async () => {
     const examplesPath = app.isPackaged
