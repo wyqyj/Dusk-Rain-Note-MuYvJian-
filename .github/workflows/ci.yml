@@ -25,8 +25,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      # 此工作流只做 TypeScript/Vite 源码校验，不打包 Electron。
+      # 忽略依赖安装期间的 postinstall，可避免 Electron 二进制下载波动
+      # 使源码校验失败；npm run build 本身不依赖这些安装脚本的产物。
       - name: Install locked dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts --no-audit --fund=false
 
       - name: Build production files
         run: npm run build
