@@ -18,6 +18,7 @@ import yaml from 'highlight.js/lib/languages/yaml';
 import latex_lang from 'highlight.js/lib/languages/latex';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { sanitizeHtml } from './sanitizeHtml';
 
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('typescript', typescript);
@@ -147,7 +148,7 @@ function preprocessLatexStructure(text: string): string {
 
   // 标题
   const titleMatch = result.match(/\\title\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/);
-  if (titleMatch) {
+  if (titleMatch?.[1]) {
     result = result.replace(/\\title\{[^}]*(?:\{[^}]*\}[^}]*)*\}\s*/, `# ${titleMatch[1].trim()}\n\n`);
   }
 
@@ -202,8 +203,9 @@ function preprocessLatexStructure(text: string): string {
   let enumIdx = 0;
   const enumLines = result.split('\n');
   for (let i = 0; i < enumLines.length; i++) {
-    if (/^\s*\d+\.\s/.test(enumLines[i])) { /* keep */ }
-    else if (/^\s*\\item\b/.test(enumLines[i])) { enumIdx++; enumLines[i] = enumLines[i].replace(/\\item\b\s*/, `${enumIdx}. `); }
+    const line = enumLines[i] || '';
+    if (/^\s*\d+\.\s/.test(line)) { /* keep */ }
+    else if (/^\s*\\item\b/.test(line)) { enumIdx++; enumLines[i] = line.replace(/\\item\b\s*/, `${enumIdx}. `); }
     else { enumIdx = 0; }
   }
   result = enumLines.join('\n');
@@ -285,10 +287,10 @@ function preprocessLatexTable(text: string): string {
       for (const row of rows) {
         const trimmed = row.trim();
         if (!trimmed || /^\\[a-z]/.test(trimmed)) continue;
-        const cells = trimmed.split('&').map(c => c.trim());
+        const cells = trimmed.split('&').map((c: string) => c.trim());
         const tag = isHeader ? 'th' : 'td';
         html += '  <tr>\n';
-        cells.forEach((cell, i) => {
+        cells.forEach((cell: string, i: number) => {
           const align = aligns[i] ? ` style="text-align:${aligns[i]}"` : '';
           html += `    <${tag}${align}>${cell}</${tag}>\n`;
         });
@@ -312,15 +314,17 @@ function parseAlignSpec(spec: string): string[] {
 
 // ========== Markdown-it ==========
 
-const md = new MarkdownIt({
+let md: MarkdownIt;
+md = new MarkdownIt({
   html: true,
   linkify: true,
   typographer: true,
-  highlight(str: string, lang: string) {
+  highlight(str: string, lang: string): string {
     if (lang && hljs.getLanguage(lang)) {
       try { return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang }).value}</code></pre>`; } catch {}
     }
-    return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
+    const escaped = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return `<pre class="hljs"><code>${escaped}</code></pre>`;
   },
 });
 
@@ -373,13 +377,13 @@ function latexPlugin(md: MarkdownIt): void {
   });
 
   md.block.ruler.before('fence', 'math_block', (state, startLine, endLine, silent) => {
-    const startPos = state.bMarks[startLine] + state.tShift[startLine];
+    const startPos = (state.bMarks[startLine] || 0) + (state.tShift[startLine] || 0);
     if (state.src.charCodeAt(startPos) !== 0x24 || state.src.charCodeAt(startPos + 1) !== 0x24) return false;
     let nextLine = startLine + 1;
     let found = false;
     while (nextLine < endLine) {
-      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
-      if (state.src.slice(lineStart, state.eMarks[nextLine]).trim() === '$$') { found = true; break; }
+      const lineStart = (state.bMarks[nextLine] || 0) + (state.tShift[nextLine] || 0);
+      if (state.src.slice(lineStart, state.eMarks[nextLine] || lineStart).trim() === '$$') { found = true; break; }
       nextLine++;
     }
     if (!found) return false;
@@ -394,12 +398,14 @@ function latexPlugin(md: MarkdownIt): void {
   });
 
   md.renderer.rules.math_inline = (tokens, idx) => {
-    try { return katex.renderToString(tokens[idx].content, { throwOnError: false, displayMode: false }); }
-    catch { return `<span class="katex-error">${tokens[idx].content}</span>`; }
+    const content = tokens[idx]?.content || '';
+    try { return katex.renderToString(content, { throwOnError: false, displayMode: false }); }
+    catch { return `<span class="katex-error">${content}</span>`; }
   };
   md.renderer.rules.math_block = (tokens, idx) => {
-    try { return `<div class="katex-block">${katex.renderToString(tokens[idx].content, { throwOnError: false, displayMode: true })}</div>`; }
-    catch { return `<div class="katex-error">${tokens[idx].content}</div>`; }
+    const content = tokens[idx]?.content || '';
+    try { return `<div class="katex-block">${katex.renderToString(content, { throwOnError: false, displayMode: true })}</div>`; }
+    catch { return `<div class="katex-error">${content}</div>`; }
   };
 }
 
@@ -413,7 +419,7 @@ md.use(latexPlugin);
 function preprocessWikiLinks(text: string): string {
   return text.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
     const escaped = title.replace(/"/g, '&quot;');
-    return `<a class="wiki-link" data-title="${escaped}" href="javascript:void(0)">${title}</a>`;
+    return `<a class="wiki-link" data-title="${escaped}" href="#">${title}</a>`;
   });
 }
 
@@ -436,15 +442,16 @@ export function renderMarkdown(text: string): string {
   if (isLatexDocument(normalized)) {
     const { text: mathRendered } = preRenderMath(normalized);
     const structured = preprocessLatexStructure(mathRendered);
-    return md.render(preprocessWikiLinks(structured));
+    return sanitizeHtml(md.render(preprocessWikiLinks(structured)));
   }
-  return md.render(preprocessWikiLinks(normalized));
+  return sanitizeHtml(md.render(preprocessWikiLinks(normalized)));
 }
 
 export function toggleTaskCheckbox(source: string, lineIndex: number, checked: boolean): string {
   const lines = source.split('\n');
   if (lineIndex < 0 || lineIndex >= lines.length) return source;
   const line = lines[lineIndex];
+  if (!line) return source;
   if (checked && /^\s*[-*+]\s*\[ \]/.test(line)) {
     lines[lineIndex] = line.replace(/^(\s*[-*+]\s*)\[ \]/, '$1[x]');
   } else if (!checked && /^\s*[-*+]\s*\[x\]/i.test(line)) {
@@ -459,8 +466,8 @@ export function extractTasks(content: string): { text: string; checked: boolean;
   lines.forEach((line, index) => {
     const uncheckedMatch = line.match(/^\s*[-*+]\s*\[ \]\s*(.*)/);
     const checkedMatch = line.match(/^\s*[-*+]\s*\[x\]\s*(.*)/i);
-    if (uncheckedMatch) tasks.push({ text: uncheckedMatch[1], checked: false, lineIndex: index });
-    else if (checkedMatch) tasks.push({ text: checkedMatch[1], checked: true, lineIndex: index });
+    if (uncheckedMatch) tasks.push({ text: uncheckedMatch[1] || '', checked: false, lineIndex: index });
+    else if (checkedMatch) tasks.push({ text: checkedMatch[1] || '', checked: true, lineIndex: index });
   });
   return tasks;
 }
@@ -526,5 +533,5 @@ export function postProcessPandocHtml(html: string): string {
     try { return `<div class="katex-block">${katex.renderToString(math.trim(), { throwOnError: false, displayMode: true })}</div>`; }
     catch { return `<div class="katex-error">${math}</div>`; }
   });
-  return html;
+  return sanitizeHtml(html);
 }

@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 cd /d "%~dp0"
-title 暮雨笺 v3.0.0 - 发布打包
+title 暮雨笺 v3.0.5 - 发布打包
 
 :: 检查 Node.js 是否可用
 where node >nul 2>nul
@@ -40,6 +40,19 @@ if not exist "node_modules" (
     echo [1/3] 已检测到本地依赖，跳过安装。
 )
 
+:: electron-builder 使用本地 Electron 运行时，避免每次打包重复下载。
+if not exist "electron-dist-local\electron.exe" (
+    if exist "node_modules\electron\dist\electron.exe" (
+        echo [准备] 正在准备本地 Electron 运行时...
+        xcopy "node_modules\electron\dist\*" "electron-dist-local\" /E /I /Y >nul
+    ) else (
+        echo.
+        echo [错误] 未找到 Electron 运行时，请先运行 npm ci 或重新安装依赖
+        pause
+        exit /b 1
+    )
+)
+
 echo [2/3] 正在构建生产文件...
 call npm run build
 if %errorlevel% neq 0 (
@@ -50,7 +63,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [3/3] 正在生成 v3.0.0 安装包...
+echo [3/3] 正在生成 v3.0.5 安装包...
 if exist "release-temp" rmdir /s /q "release-temp"
 call npx electron-builder --win --publish never --config.directories.output=release-temp
 if %errorlevel% neq 0 (

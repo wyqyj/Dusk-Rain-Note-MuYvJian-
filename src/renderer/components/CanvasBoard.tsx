@@ -6,6 +6,7 @@ import { VersionHistory } from './VersionHistory';
 import { useAttachmentStore } from '../store/attachmentStore';
 import { CanvasItem, CanvasLink, Note, useNoteStore } from '../store/noteStore';
 import { generateId, renderMarkdown } from '../utils/markdown';
+import { isCanvasBackgroundWheelTarget } from '../utils/canvasWheel';
 
 type Camera = { x: number; y: number; scale: number };
 type Interaction =
@@ -20,6 +21,17 @@ const clampScale = (value: number) => Math.min(2.5, Math.max(0.35, value));
 const minimumItemHeight = (item: CanvasItem) => item.type === 'note' ? 142 : item.type === 'image' ? Math.max(180, item.width * 0.62) : 122;
 const defaultItemHeight = (item: CanvasItem) => minimumItemHeight(item);
 const itemHeight = (item: CanvasItem) => Math.max(item.height || defaultItemHeight(item), minimumItemHeight(item));
+
+function getVisibleItems(items: CanvasItem[], camera: Camera, viewport: { width: number; height: number }): CanvasItem[] {
+  const margin = 240;
+  return items.filter((item) => {
+    const screenX = item.x * camera.scale + camera.x;
+    const screenY = item.y * camera.scale + camera.y;
+    const screenWidth = item.width * camera.scale;
+    const screenHeight = itemHeight(item) * camera.scale;
+    return screenX + screenWidth > -margin && screenX < viewport.width + margin && screenY + screenHeight > -margin && screenY < viewport.height + margin;
+  });
+}
 
 function imageToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -75,6 +87,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
   const [copiedItem, setCopiedItem] = useState<CanvasItem | null>(null);
   const [previewRatio, setPreviewRatio] = useState(60);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [viewport, setViewport] = useState({ width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY });
 
   const defaultPosition = () => {
     const index = itemsRef.current.length;
@@ -106,6 +119,19 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
     const frame = window.requestAnimationFrame(() => fitCanvas(next));
     return () => window.cancelAnimationFrame(frame);
   }, [note.id, fitCanvas]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const updateViewport = () => {
+      const rect = stage.getBoundingClientRect();
+      setViewport({ width: rect.width, height: rect.height });
+    };
+    updateViewport();
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
 
   const commit = useCallback((nextItems = itemsRef.current, nextLinks = links) => updateNote(note.id, { canvasItems: nextItems, canvasLinks: nextLinks }), [links, note.id, updateNote]);
   const setItemsLocal = useCallback((next: CanvasItem[]) => { itemsRef.current = next; setItems(next); }, []);
@@ -139,8 +165,10 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
     setItemsLocal(next); setSelectedId(item.id); commit(next); setMessage(`已关联「${source.title}」`);
   }, [commit, note.id, notes, setItemsLocal]);
   const applyTemplate = (key: string) => {
-    const next = templates[key].items.map((item) => ({ ...item, id: generateId() }));
-    setItemsLocal(next); setLinks([]); updateNote(note.id, { canvasItems: next, canvasLinks: [] }); setShowTemplates(false); setMessage(`已应用「${templates[key].label}」模板`);
+    const template = templates[key];
+    if (!template) return;
+    const next = template.items.map((item) => ({ ...item, id: generateId() }));
+    setItemsLocal(next); setLinks([]); updateNote(note.id, { canvasItems: next, canvasLinks: [] }); setShowTemplates(false); setMessage(`已应用「${template.label}」模板`);
   };
   const connect = (fromId: string, toId: string) => {
     if (fromId === toId || links.some((link) => link.fromId === fromId && link.toId === toId)) return;
@@ -206,6 +234,10 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
   };
   const finishInteraction = () => { if (interactionRef.current?.type === 'drag' || interactionRef.current?.type === 'resize') commit(); interactionRef.current = null; };
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!isCanvasBackgroundWheelTarget(event.target)) {
+      event.stopPropagation();
+      return;
+    }
     event.preventDefault();
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -323,6 +355,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
   });
 
   const selected = items.find((item) => item.id === selectedId);
+  const visibleItems = useMemo(() => getVisibleItems(items, camera, viewport), [camera, items, viewport]);
   const inspectorNote = notes.find((entry) => entry.id === inspectorNoteId && !entry.isDeleted);
   const positions = useMemo(() => new Map(items.map((item) => [item.id, { x: item.x + item.width / 2, y: item.y + itemHeight(item) / 2 }])), [items]);
   const sourceNotes = notes.filter((entry) => !entry.isDeleted && !entry.isArchived && entry.id !== note.id && entry.noteType !== 'canvas').slice(0, 8);
@@ -342,7 +375,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
         {note.canvasOutline?.length ? <aside className="canvas-outline" onPointerDown={(event) => event.stopPropagation()}><b>章节定位</b>{note.canvasOutline.map((entry) => <button key={entry.itemId} onClick={() => { const target = itemsRef.current.find((item) => item.id === entry.itemId); if (target) focusItem(target); }}>{entry.label}</button>)}</aside> : null}
         <div className="canvas-stage" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }}>
           <svg className="canvas-links" aria-hidden="true">{links.map((link) => { const from = positions.get(link.fromId); const to = positions.get(link.toId); return from && to ? <line key={link.id} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={link.color || '#818cf8'} strokeWidth="2" /> : null; })}</svg>
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const linkedNote = item.type === 'note' ? notes.find((entry) => entry.id === item.content) : undefined;
             const imageSource = item.attachmentId ? attachments.find((attachment) => attachment.id === item.attachmentId)?.dataUrl || item.content : item.content;
             return <div key={item.id} data-canvas-item className={`canvas-item ${item.type} ${selectedId === item.id ? 'selected' : ''} ${connectorFrom === item.id ? 'link-source' : ''}`} style={{ transform: `translate(${item.x}px, ${item.y}px)`, width: item.width, height: itemHeight(item) }} onPointerDown={(event) => handleItemPointerDown(event, item)} onContextMenu={(event) => handleContextMenu(event, item)} onDoubleClick={(event) => { if (item.type === 'note' && linkedNote) openNoteInspector(item, linkedNote); else if (!(event.target instanceof HTMLTextAreaElement)) focusItem(item); }}>

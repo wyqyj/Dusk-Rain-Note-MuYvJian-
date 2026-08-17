@@ -3,7 +3,8 @@ setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 set "MUYUJIAN_PROJECT_DIR=%~dp0"
 cd /d "%MUYUJIAN_PROJECT_DIR%"
-title 暮雨笺 v3.0.4 - 本地启动
+set "MUYUJIAN_VERSION=3.0.5"
+title 暮雨笺 v%MUYUJIAN_VERSION% - 本地启动
 
 :: 检查 Node.js 是否可用（优先使用系统 PATH）
 where node >nul 2>nul
@@ -28,13 +29,33 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 首次启动或依赖目录缺失时自动安装，避免构建后无法找到 Electron 运行时
-if not exist "%MUYUJIAN_PROJECT_DIR%node_modules\electron\dist\electron.exe" (
+where npm >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [错误] 未找到 npm，请确认 Node.js 安装完整
+    pause
+    exit /b 1
+)
+
+:: Electron 首次下载默认使用镜像；如果用户已设置 ELECTRON_MIRROR，则保留用户配置。
+if not defined ELECTRON_MIRROR set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
+
+:: 依赖目录缺失、npm 安装快照缺失或 Electron 运行时缺失时自动安装。
+if not exist "%MUYUJIAN_PROJECT_DIR%node_modules\.package-lock.json" set "MUYUJIAN_NEEDS_INSTALL=1"
+if not exist "%MUYUJIAN_PROJECT_DIR%node_modules\electron\dist\electron.exe" set "MUYUJIAN_NEEDS_INSTALL=1"
+if defined MUYUJIAN_NEEDS_INSTALL (
     echo [准备] 正在安装项目依赖，首次启动可能需要几分钟...
-    call npm ci
+    echo [准备] Electron 下载镜像：%ELECTRON_MIRROR%
+    call npm ci --prefer-offline --no-audit --no-fund
     if errorlevel 1 (
         echo.
         echo [错误] 项目依赖安装失败，请检查网络连接后重试
+        pause
+        exit /b 1
+    )
+    if not exist "%MUYUJIAN_PROJECT_DIR%node_modules\electron\dist\electron.exe" (
+        echo.
+        echo [错误] 依赖安装完成，但 Electron 运行时未下载成功
+        echo 请检查 Clash 代理或 ELECTRON_MIRROR 配置后重试
         pause
         exit /b 1
     )

@@ -197,6 +197,62 @@ const MAX_QUICK_NOTE_WINDOWS = 10;
 let todayPlanWindow: BrowserWindow | null = null;
 let timerStatsWindow: BrowserWindow | null = null;
 let lastQuickNoteCreateTime = 0;
+let contentSecurityPolicyInstalled = false;
+
+function isPathWithin(targetPath: string, roots: string[]): boolean {
+  try {
+    if (!targetPath || !fs.existsSync(targetPath)) return false;
+    const target = fs.realpathSync(path.resolve(targetPath));
+    return roots.some((root) => {
+      if (!fs.existsSync(root)) return false;
+      const resolvedRoot = fs.realpathSync(path.resolve(root));
+      const relative = path.relative(resolvedRoot, target);
+      return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+    });
+  } catch {
+    return false;
+  }
+}
+
+function writePayload(filePath: string, payload: string, expected: 'array' | 'object'): { success: boolean; error?: string } {
+  try {
+    if (typeof payload !== 'string' || payload.length > 100 * 1024 * 1024) throw new Error('数据内容无效或超过 100MB 限制');
+    const parsed: unknown = JSON.parse(payload);
+    if (expected === 'array' ? !Array.isArray(parsed) : (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) throw new Error('数据格式无效');
+    const temporary = `${filePath}.${process.pid}.tmp`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(temporary, payload, 'utf-8');
+    fs.renameSync(temporary, filePath);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function getTrustedOpenRoots(): string[] {
+  const examplesPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'examples', 'workbench')
+    : path.join(__dirname, '..', '..', 'examples', 'workbench');
+  const skillsPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'skills', 'muyujian-question-book-import')
+    : path.join(__dirname, '..', '..', 'skills', 'muyujian-question-book-import');
+  const planSkillPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'skills', 'muyujian-plan-import')
+    : path.join(__dirname, '..', '..', 'skills', 'muyujian-plan-import');
+  return [workspaceStorage?.getRoot(), examplesPath, skillsPath, planSkillPath].filter((root): root is string => typeof root === 'string' && root.length > 0);
+}
+
+function installContentSecurityPolicy(win: BrowserWindow): void {
+  if (contentSecurityPolicyInstalled) return;
+  contentSecurityPolicyInstalled = true;
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    headers['Content-Security-Policy'] = [
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; font-src 'self' data:; connect-src 'self' http://localhost:5173 ws://localhost:5173; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
+    ];
+    callback({ responseHeaders: headers });
+  });
+}
 
 function resolveMainWindowBounds(savedBounds?: AppStore['windowBounds']): Electron.Rectangle {
   const primaryArea = screen.getPrimaryDisplay().workArea;
@@ -229,6 +285,7 @@ function createMainWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
     show: false,
   });
+  installContentSecurityPolicy(mainWindow);
   const rendererPath = path.join(__dirname, '../renderer/index.html');
   if (fs.existsSync(rendererPath)) mainWindow.loadFile(rendererPath);
   else mainWindow.loadURL('http://localhost:5173');
@@ -320,6 +377,24 @@ function createTimerStatsWindow(): void {
 function setupIPC(): void {
   ipcMain.handle('workspace-get-state', () => workspaceStorage.readState());
   ipcMain.handle('workspace-save-state', (_e: any, state: string) => workspaceStorage.writeState(state));
+  ipcMain.handle('workspace-reset', () => {
+    const result = workspaceStorage.reset();
+    if (!result.success) return result;
+    store.store = {
+      quickNote: '',
+      settings: { theme: 'light', textMode: 'modern', quickNoteShortcut: 'Alt+Q', autoSaveInterval: 60, dataPath: workspaceStorage.getRoot() },
+      todayPlanOpacity: 1,
+      initialized: false,
+    };
+    createWelcomeNote();
+    for (const win of quickNoteWindows.splice(0)) {
+      if (!win.isDestroyed()) win.destroy();
+    }
+    if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.destroy();
+    if (timerStatsWindow && !timerStatsWindow.isDestroyed()) timerStatsWindow.destroy();
+    notifyAllReload();
+    return { ...result, initialized: true };
+  });
   ipcMain.handle('workspace-get-root', () => workspaceStorage.getRoot());
   ipcMain.handle('workspace-choose-root', () => workspaceStorage.chooseRoot(BrowserWindow.getFocusedWindow()));
   ipcMain.handle('workspace-migrate', (_e: any, destination: string) => workspaceStorage.migrate(destination));
@@ -332,7 +407,13 @@ function setupIPC(): void {
     if (typeof sourcePath !== 'string' || !sourcePath) return { success: false, error: '书籍路径无效' };
     return workspaceStorage.generateBookCover(sourcePath);
   });
-  ipcMain.handle('workspace-open-path', (_e: any, target: string) => shell.openPath(target));
+  ipcMain.handle('workspace-open-path', async (_e: any, target: string) => {
+    if (typeof target !== 'string' || !isPathWithin(target, getTrustedOpenRoots())) {
+      return { success: false, error: '路径不在允许打开的工作区范围内' };
+    }
+    const error = await shell.openPath(path.resolve(target));
+    return error ? { success: false, error } : { success: true, path: path.resolve(target) };
+  });
   ipcMain.handle('workspace-open-examples', async () => {
     const examplesPath = app.isPackaged
       ? path.join(process.resourcesPath, 'examples', 'workbench')
@@ -413,10 +494,12 @@ function setupIPC(): void {
   ipcMain.handle('get-notes', () => { try { const file = notesPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
   ipcMain.handle('get-attachments', () => { try { const file = attachmentsPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
   ipcMain.handle('save-attachments', (_e: any, data: string) => {
-    try { fs.writeFileSync(attachmentsPath(), data, 'utf-8'); return { success: true }; } catch { return { success: false }; }
+    return writePayload(attachmentsPath(), data, 'array');
   });
   ipcMain.handle('save-notes', (_e: any, n: string) => {
-    try { fs.writeFileSync(notesPath(), n, 'utf-8'); notifyAllReload(); return { success: true }; } catch { return { success: false }; }
+    const result = writePayload(notesPath(), n, 'array');
+    if (result.success) notifyAllReload();
+    return result;
   });
   ipcMain.handle('create-quick-note', (_e: any, noteJson: string) => {
     try {
@@ -485,6 +568,17 @@ function setupIPC(): void {
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  });
+  ipcMain.handle('workspace-plan-skill', () => {
+    try {
+      const directory = app.isPackaged
+        ? path.join(process.resourcesPath, 'skills', 'muyujian-plan-import')
+        : path.join(__dirname, '..', '..', 'skills', 'muyujian-plan-import');
+      const skillPath = path.join(directory, 'SKILL.md');
+      const promptPath = path.join(directory, 'references', 'agent-prompts.md');
+      if (!fs.existsSync(skillPath) || !fs.existsSync(promptPath)) throw new Error('计划整理技能资源缺失');
+      return { success: true, directory, skillPath, promptPath, prompt: fs.readFileSync(promptPath, 'utf8') };
+    } catch (error: any) { return { success: false, error: error.message }; }
   });
   // 导出 Word：用 pandoc 将原始 Markdown/LaTeX 编译为 docx
   ipcMain.handle('export-word', async (_e: any, title: string, content: string) => {

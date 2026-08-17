@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 学习工作台（文件系统能力经主进程收口）
   getWorkspaceState: () => ipcRenderer.invoke('workspace-get-state'),
   saveWorkspaceState: (state: string) => ipcRenderer.invoke('workspace-save-state', state),
+  resetWorkspace: () => ipcRenderer.invoke('workspace-reset'),
   getWorkspaceRoot: () => ipcRenderer.invoke('workspace-get-root'),
   chooseWorkspaceRoot: () => ipcRenderer.invoke('workspace-choose-root'),
   migrateWorkspace: (destination: string) => ipcRenderer.invoke('workspace-migrate', destination),
@@ -79,5 +80,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openWorkspacePath: (target: string) => ipcRenderer.invoke('workspace-open-path', target),
   openWorkspaceExamples: () => ipcRenderer.invoke('workspace-open-examples'),
   getQuestionBookSkill: () => ipcRenderer.invoke('workspace-question-book-skill'),
+  getPlanImportSkill: () => ipcRenderer.invoke('workspace-plan-skill'),
   notifyWorkspace: (title: string, body: string) => ipcRenderer.invoke('workspace-notify', title, body),
 });

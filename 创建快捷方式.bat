@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 cd /d "%~dp0"
-title 暮雨笺 v3.0.0 - 创建快捷方式
+title 暮雨笺 v3.0.5 - 创建快捷方式
 
 echo [INFO] 正在创建桌面快捷方式...
 
@@ -14,7 +14,7 @@ echo sLinkFile = oWS.SpecialFolders("Desktop") ^& "\暮雨笺.lnk" >> "%VBS_FILE
 echo Set oLink = oWS.CreateShortcut(sLinkFile) >> "%VBS_FILE%"
 echo oLink.TargetPath = "%CURRENT_DIR%\启动暮雨笺.bat" >> "%VBS_FILE%"
 echo oLink.WorkingDirectory = "%CURRENT_DIR%" >> "%VBS_FILE%"
-echo oLink.Description = "暮雨笺 v3.0.0 - 本地学习工作台" >> "%VBS_FILE%"
+echo oLink.Description = "暮雨笺 v3.0.5 - 本地学习工作台" >> "%VBS_FILE%"
 echo oLink.WindowStyle = 7 >> "%VBS_FILE%"
 echo oLink.Save >> "%VBS_FILE%"
 

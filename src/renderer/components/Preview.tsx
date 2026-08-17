@@ -91,7 +91,8 @@ export const Preview: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
         let taskIndex = 0;
         let lineIndex = -1;
         for (let i = 0; i < lines.length; i++) {
-          if (/^\s*[-*+]\s*\[/.test(lines[i])) {
+          const line = lines[i];
+          if (line && /^\s*[-*+]\s*\[/.test(line)) {
             if (taskIndex === itemIndex) { lineIndex = i; break; }
             taskIndex++;
           }

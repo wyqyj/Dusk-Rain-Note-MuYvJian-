@@ -19,14 +19,20 @@ interface AttachmentStore {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSavedJson = '';
 
 function persist(attachments: Attachment[]) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    saveTimer = null;
     const data = JSON.stringify(attachments);
-    if (window.electronAPI?.saveAttachments) window.electronAPI.saveAttachments(data);
-    else localStorage.setItem('muyujian-attachments', data);
-  }, 250);
+    if (data === lastSavedJson) return;
+    lastSavedJson = data;
+    if (window.electronAPI?.saveAttachments) void window.electronAPI.saveAttachments(data).catch(() => {});
+    else {
+      try { localStorage.setItem('muyujian-attachments', data); } catch {}
+    }
+  }, 500);
 }
 
 export const useAttachmentStore = create<AttachmentStore>((set, get) => ({

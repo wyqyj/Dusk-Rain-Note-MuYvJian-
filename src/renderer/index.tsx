@@ -6,6 +6,12 @@ import { TodayPlanWindow } from './components/TodayPlanWindow';
 import { TimerStatsWindow } from './components/TimerStatsWindow';
 import './styles/index.css';
 
+// Apply the persisted theme before React paints to avoid a light-mode flash.
+try {
+  const settings = JSON.parse(localStorage.getItem('lingxi-settings') || '{}') as { theme?: string };
+  if (settings.theme === 'dark') document.documentElement.classList.add('dark');
+} catch {}
+
 const hash = window.location.hash;
 const isQuickNote = hash === '#/quick-note';
 const isTodayPlan = hash === '#/today-plan';

@@ -31,5 +31,11 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-audit --fund=false
 
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
       - name: Build production files
         run: npm run build

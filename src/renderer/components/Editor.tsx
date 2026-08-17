@@ -90,14 +90,14 @@ export const Editor: React.FC = () => {
   }, [insertImage]);
 
   // 粘贴图片
-  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+  const handlePaste = useCallback((e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of Array.from(items)) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
         const file = item.getAsFile();
-        if (file) await insertImage(file);
+        if (file) void insertImage(file);
       }
     }
   }, [insertImage]);

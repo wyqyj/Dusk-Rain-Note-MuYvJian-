@@ -20,6 +20,13 @@ interface ActiveSession {
   pausedMs: number;
 }
 
+function isActiveSession(value: unknown): value is ActiveSession {
+  if (!value || typeof value !== 'object') return false;
+  const session = value as Partial<ActiveSession>;
+  return typeof session.taskId === 'string' && typeof session.noteId === 'string' && typeof session.taskText === 'string'
+    && typeof session.noteTitle === 'string' && Number.isFinite(session.startedAt) && Number.isFinite(session.pausedMs);
+}
+
 interface TimerStore {
   activeSession: ActiveSession | null;
   running: boolean;
@@ -156,7 +163,7 @@ export const useTimerStore = create<TimerStore>((set, get) => ({
     if (!window.electronAPI) return;
     try {
       const session = await window.electronAPI.loadActiveSession();
-      if (session) {
+      if (isActiveSession(session)) {
         set({ activeSession: session, running: false, displayMs: session.pausedMs || 0 });
       }
     } catch {}

@@ -174,7 +174,9 @@ export const texts = {
     totalTime: '累计用时',
     timerRunning: '计时中',
     timerAll: '统而计之',
+    pin: '置顶',
+    unpin: '取消置顶',
   },
 } as const;
 
-export type Texts = typeof texts['modern'];
+export type Texts = { [Key in keyof typeof texts.modern]: string };

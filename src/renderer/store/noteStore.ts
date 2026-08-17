@@ -1,69 +1,6 @@
 import { create } from 'zustand';
-
-export type NoteType = 'note' | 'todo' | 'canvas';
-
-export type CanvasItemType = 'text' | 'image' | 'note';
-
-export interface CanvasItem {
-  id: string;
-  type: CanvasItemType;
-  x: number;
-  y: number;
-  width: number;
-  height?: number;
-  content: string;
-  color?: string;
-  attachmentId?: string;
-}
-
-export interface CanvasLink {
-  id: string;
-  fromId: string;
-  toId: string;
-  label?: string;
-  color?: string;
-}
-
-export interface CanvasOutlineItem {
-  label: string;
-  itemId: string;
-}
-
-export interface NoteVersion {
-  id: string;
-  savedAt: number;
-  title: string;
-  content: string;
-  canvasItems?: CanvasItem[];
-  canvasLinks?: CanvasLink[];
-  canvasWallpaper?: string;
-  canvasWallpaperFit?: 'cover' | 'contain' | 'repeat';
-  canvasOutline?: CanvasOutlineItem[];
-}
-
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  tags: string[];
-  createdAt: number;
-  updatedAt: number;
-  deadline?: number;
-  isTodayPlan: boolean;
-  noteType: NoteType;
-  isArchived: boolean;
-  isPinned?: boolean;
-  pinnedInTags?: string[];
-  isDeleted?: boolean;
-  deletedAt?: number;
-  canvasItems?: CanvasItem[];
-  canvasLinks?: CanvasLink[];
-  canvasWallpaper?: string;
-  canvasWallpaperFit?: 'cover' | 'contain' | 'repeat';
-  canvasOutline?: CanvasOutlineItem[];
-  kanbanStatus?: 'todo' | 'doing' | 'done';
-  history?: NoteVersion[];
-}
+import type { CanvasItem, CanvasItemType, CanvasLink, CanvasOutlineItem, Note, NoteType, NoteVersion } from '../../shared/types';
+export type { CanvasItem, CanvasItemType, CanvasLink, CanvasOutlineItem, Note, NoteType, NoteVersion } from '../../shared/types';
 
 interface NoteStore {
   notes: Note[];
@@ -114,16 +51,19 @@ function createVersion(note: Note): NoteVersion {
 function saveToDisk(notes: Note[]): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    saveTimer = null;
     if (reloading) return;
     const json = JSON.stringify(notes, null, 2);
     if (json === lastSavedJson) return;
     lastSavedJson = json;
     if (window.electronAPI) {
-      window.electronAPI.saveNotes(json);
+      void window.electronAPI.saveNotes(json).catch(() => {
+        // Keep the in-memory state; a later edit will retry the write.
+      });
     } else {
       try { localStorage.setItem('lingxi-notes', json); } catch {}
     }
-  }, 300);
+  }, 500);
 }
 
 export function validateNotes(data: any[]): Note[] {
@@ -203,6 +143,7 @@ export const useNoteStore = create<NoteStore>((set, get) => ({
     const idx = notes.findIndex((n) => n.id === id);
     if (idx === -1) return;
     const note = notes[idx];
+    if (!note) return;
     if (note.content === content) return;
     const updated = [...notes];
     updated[idx] = { ...note, content, updatedAt: Date.now() };

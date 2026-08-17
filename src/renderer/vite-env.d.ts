@@ -48,6 +48,7 @@ interface ElectronAPI {
   minimizeTimerStatsWindow: () => void;
   getWorkspaceState: () => Promise<string>;
   saveWorkspaceState: (state: string) => Promise<{ success: boolean; error?: string }>;
+  resetWorkspace: () => Promise<{ success: boolean; error?: string; files?: number; root?: string; initialized?: boolean }>;
   getWorkspaceRoot: () => Promise<string>;
   chooseWorkspaceRoot: () => Promise<{ canceled?: boolean; path?: string }>;
   migrateWorkspace: (destination: string) => Promise<{ success: boolean; error?: string; source?: string; destination?: string; files?: number }>;
@@ -57,9 +58,10 @@ interface ElectronAPI {
   readQuestionBook: (folder: string) => Promise<{ success: boolean; folder?: string; content?: string; error?: string }>;
   chooseBook: () => Promise<{ canceled?: boolean; path?: string; originalPath?: string; name?: string; coverPath?: string; coverError?: string }>;
   generateBookCover: (sourcePath: string) => Promise<{ success: boolean; coverPath?: string; error?: string }>;
-  openWorkspacePath: (target: string) => Promise<string>;
+  openWorkspacePath: (target: string) => Promise<{ success: boolean; path?: string; error?: string }>;
   openWorkspaceExamples: () => Promise<{ success: boolean; path?: string; error?: string }>;
   getQuestionBookSkill: () => Promise<{ success: boolean; directory?: string; skillPath?: string; promptPath?: string; prompt?: string; error?: string }>;
+  getPlanImportSkill: () => Promise<{ success: boolean; directory?: string; skillPath?: string; promptPath?: string; prompt?: string; error?: string }>;
   notifyWorkspace: (title: string, body: string) => Promise<boolean>;
 }
 

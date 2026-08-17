@@ -6,6 +6,8 @@ import * as zlib from 'zlib';
 
 const BOOTSTRAP_NAME = 'muyujian-workspace-bootstrap.json';
 const STATE_NAME = 'workspace.json';
+const MANAGED_FILES = [STATE_NAME, 'notes.json', 'attachments.json', 'task-timer-records.json'];
+const MANAGED_DIRECTORIES = ['books', 'question-books', 'attachments', 'exports', 'backups', 'plans'];
 
 type BackupEntry = { path: string; data: string; size: number; sha256: string };
 
@@ -79,6 +81,33 @@ export class WorkspaceStorage {
       fs.renameSync(temporary, this.getStatePath());
       return { success: true };
     } catch (error: any) { return { success: false, error: error.message }; }
+  }
+
+  reset(): { success: boolean; error?: string; files?: number; root?: string } {
+    try {
+      const root = path.resolve(this.root);
+      const filesystemRoot = path.parse(root).root;
+      if (!root || root === filesystemRoot || root.length < 5) throw new Error('拒绝初始化无效的数据目录');
+      let files = 0;
+      for (const fileName of MANAGED_FILES) {
+        const target = path.join(root, fileName);
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { force: true });
+          files += 1;
+        }
+      }
+      for (const directoryName of MANAGED_DIRECTORIES) {
+        const target = path.join(root, directoryName);
+        if (fs.existsSync(target)) {
+          files += listFiles(root, target).length;
+          fs.rmSync(target, { recursive: true, force: true });
+        }
+      }
+      this.ensureRoot();
+      return { success: true, files, root };
+    } catch (error: any) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   async chooseRoot(parent: BrowserWindow | null): Promise<{ canceled?: boolean; path?: string }> {

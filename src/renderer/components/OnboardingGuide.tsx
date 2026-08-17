@@ -9,7 +9,7 @@ const steps = [
 
 export const OnboardingGuide: React.FC<{ onFinish: () => void; onSkip: () => void }> = ({ onFinish, onSkip }) => {
   const [step, setStep] = useState(0);
-  const current = steps[step];
+  const current = steps[step] || { eyebrow: '', title: '', body: '' };
   const isLast = step === steps.length - 1;
 
   return <div className="onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
