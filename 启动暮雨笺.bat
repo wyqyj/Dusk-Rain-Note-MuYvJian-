@@ -3,7 +3,7 @@ setlocal EnableExtensions
 chcp 65001 >nul 2>nul
 set "MUYUJIAN_PROJECT_DIR=%~dp0"
 cd /d "%MUYUJIAN_PROJECT_DIR%"
-set "MUYUJIAN_VERSION=3.0.5"
+set "MUYUJIAN_VERSION=3.0.6"
 title 暮雨笺 v%MUYUJIAN_VERSION% - 本地启动
 
 :: 检查 Node.js 是否可用（优先使用系统 PATH）

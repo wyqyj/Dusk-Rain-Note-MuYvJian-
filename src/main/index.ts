@@ -9,6 +9,9 @@ import { WorkspaceStorage } from './workspaceStorage';
 const pandocPath = app.isPackaged
   ? path.join(process.resourcesPath, 'pandoc', 'pandoc.exe')
   : path.join(__dirname, '..', '..', 'resources', 'pandoc', 'pandoc.exe');
+const updateNoticesPath = app.isPackaged
+  ? path.join(process.resourcesPath, 'UPDATE_NOTICES.md')
+  : path.join(__dirname, '..', '..', 'UPDATE_NOTICES.md');
 
 let dataDir = app.isPackaged
   ? path.join(app.getPath('userData'), 'data')
@@ -35,7 +38,12 @@ const store = new Store<AppStore>({
   },
 });
 
-function createWelcomeNote(): void {
+function readUpdateNotices(): string {
+  try { return fs.readFileSync(updateNoticesPath, 'utf-8'); }
+  catch { return '# 暮雨笺更新告示\n\n未能读取内置更新记录，请在项目根目录查看 UPDATE_NOTICES.md。'; }
+}
+
+function createInitialNotes(): void {
   try {
     if (store.get('initialized')) return;
     const notesPath = path.join(dataDir, 'notes.json');
@@ -44,7 +52,7 @@ function createWelcomeNote(): void {
     if (notes.length > 0) { store.set('initialized', true); return; }
     store.set('initialized', true);
     const now = Date.now();
-    const welcomeNotes = [
+    const initialNotes = [
       {
         id: 'welcome-001', title: '暮雨笺 · 功能介绍',
         content: `暮雨笺是一款融合记事本、待办管理与快速随笔记的桌面应用，支持 Markdown 和 LaTeX 数学公式的实时渲染。
@@ -174,20 +182,14 @@ $$e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!} = 1 + x + \\frac{x^2}{2!} + \\frac
         tags: ['启程'], createdAt: now + 2, updatedAt: now + 2, isTodayPlan: false, noteType: 'note', isArchived: false,
       },
       {
-        id: 'welcome-004', title: '寄语',
-        content: `学姐，毕业快乐！
-
-四年的时光转瞬即逝，感谢你在校园里留下的每一份努力与美好。
-
-这个小小的便签应用，希望能成为你未来路上的随身笔记本——记录灵感、规划日程、整理思绪。无论走到哪里，愿它陪你把每一天都过得井井有条。
-
-前路漫漫，未来可期。祝一切顺利，万事胜意。`,
-        tags: ['启程'], createdAt: now + 3, updatedAt: now + 3, isTodayPlan: false, noteType: 'note', isArchived: false,
+        id: 'welcome-004', title: '暮雨笺 · 版本更新记录',
+        content: readUpdateNotices(),
+        tags: ['更新记录'], createdAt: now + 3, updatedAt: now + 3, isTodayPlan: false, noteType: 'note', isArchived: false,
       },
     ];
-    notes.unshift(...welcomeNotes);
+    notes.unshift(...initialNotes);
     fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2), 'utf-8');
-  } catch (err) { console.error('创建欢迎便签失败:', err); }
+  } catch (err) { console.error('创建预置笔记失败:', err); }
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -386,7 +388,7 @@ function setupIPC(): void {
       todayPlanOpacity: 1,
       initialized: false,
     };
-    createWelcomeNote();
+    createInitialNotes();
     for (const win of quickNoteWindows.splice(0)) {
       if (!win.isDestroyed()) win.destroy();
     }
@@ -763,7 +765,7 @@ app.whenReady().then(() => {
   workspaceStorage = new WorkspaceStorage(dataDir);
   dataDir = workspaceStorage.getRoot();
   createMenu();
-  createWelcomeNote();
+  createInitialNotes();
   setupIPC();
   createMainWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
