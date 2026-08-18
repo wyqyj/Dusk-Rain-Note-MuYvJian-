@@ -1,0 +1,13 @@
+# 依赖与构建产物（均可再生）
+node_modules/
+dist/
+dist-apk/
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 本地敏感配置（token 等，绝不入库）
+*.token
+github-token.txt
