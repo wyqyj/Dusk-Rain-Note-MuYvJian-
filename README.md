@@ -30,6 +30,17 @@ muyujian-android/
 | Gradle | 8.14.3（wrapper 自动） | `D:/muyujian-tooling/gradle-home` |
 | Clash 代理 | 127.0.0.1:7897（首次依赖下载需要） | — |
 
+## 克隆后构建（通用）
+
+```bash
+git clone -b android-mobile https://github.com/wyqyj/Dusk-Rain-Note-MuYvJian-.git
+cd Dusk-Rain-Note-MuYvJian-
+npm install
+# 准备 JDK 21 与 Android SDK（设置 ANDROID_HOME 或 local.properties 的 sdk.dir）
+npx cap sync android
+cd android && ./gradlew assembleDebug   # 产物 app/build/outputs/apk/debug/
+```
+
 ## 构建步骤
 
 ```bash
@@ -38,8 +49,7 @@ bash build-apk.sh            # debug
 bash build-apk.sh release    # release（未配置签名，见脚本注释）
 
 # 手动
-source D:/muyujian-tooling/env.sh
-export JAVA_HOME="$JDK21_HOME"
+source D:/muyujian-tooling/env.sh   # JAVA_HOME 已由 env.sh 固定为 JDK 21
 cd muyujian-android
 npx vite build               # 1. web 资源 → dist/
 npx cap sync android         # 2. 同步 → android/app/src/main/assets/public
