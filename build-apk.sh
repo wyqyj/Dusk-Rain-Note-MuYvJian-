@@ -10,8 +10,8 @@
 # =============================================================
 set -e
 
-WORKSPACE="D:/工作区/星河阙"
-PROJECT="$WORKSPACE/muyujian-android"
+# 脚本自定位：克隆到任意位置均可运行（不再依赖硬编码工作区路径）
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLING="D:/muyujian-tooling"
 MODE="${1:-debug}"
 
