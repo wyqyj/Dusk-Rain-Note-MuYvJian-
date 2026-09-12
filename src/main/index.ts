@@ -10,6 +10,7 @@ import { enqueueFile, mergeNotes, readJsonValue, sanitizeNoteUpdates, writeAtomi
 import { AgentBridge, BridgeOptions, generateBridgeToken } from './agentBridge';
 import { DshRuntime } from './dshRuntime';
 import { DshWebGui } from './dshWeb';
+import { startDshConfigWatcher } from './dshConfigWatcher';
 import { readHarnessModelConfig, seedHarnessModelConfig, upsertHarnessModelConfig } from './dshConfig';
 import { KnowledgeService } from './knowledgeService';
 
@@ -415,6 +416,14 @@ const dshWebGui = new DshWebGui({
   getApiKey: decryptAiApiKey,
   getBridgeEndpoint: ensureInternalAgentBridge,
   log: (line) => console.warn(line),
+});
+// 配置热重载：在 dsh Web GUI 里改模型/Key 时自动重启运行时（web 子进程仅运行中才重启）
+const stopDshConfigWatcher = startDshConfigWatcher({
+  homeDir: dshHomeDir,
+  onChange: () => {
+    void dshRuntime.restart();
+    if (dshWebGui.isRunning()) void dshWebGui.restart();
+  },
 });
 // 内置 Agent 专用 Bridge：独立于用户配置的"对外接入"桥，
 // 只绑 loopback、token 每次启动随机生成且不落盘，仅 dsh 子进程回调用。
@@ -1301,4 +1310,4 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { void agentBridge?.stop(); void internalAgentBridge?.stop(); void dshRuntime.close(); void dshWebGui.stop(); });
+app.on('before-quit', () => { stopDshConfigWatcher(); void agentBridge?.stop(); void internalAgentBridge?.stop(); void dshRuntime.close(); void dshWebGui.stop(); });

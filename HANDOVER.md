@@ -3,7 +3,7 @@
 最后更新：2026-09-11
 接手前请先读本文件，再按「执行顺序」一节开始。
 
-> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）、F2（Agent 预设基础框架）、F2b（研究预设 research-db 建库与检索）与 F3（文档生成 docx/xlsx/pdf）已落地。2026-09-12：全部工作已提交（`f72ec31`、`5b26094`、`a0d6760`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 80 用例通过 / 2 跳过 + 双侧 typecheck 全绿。
+> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）、F2（Agent 预设基础框架）、F2b（研究预设 research-db 建库与检索）与 F3（文档生成 docx/xlsx/pdf）已落地；dsh 配置热重载（GUI 改配置自动重启运行时）已完成。2026-09-12：全部工作已提交（`f72ec31`、`5b26094`、`a0d6760`、`f75907a`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 83 用例通过 / 2 跳过 + 双侧 typecheck 全绿。
 
 ## 一、项目速览
 
@@ -123,7 +123,7 @@
 
 ## 六、已知遗留事项
 
-- dsh 配置在 GUI 里改动后 sdk/web 子进程不自动重载（需重启应用或 Agent 页）。
+dsh 配置热重载已实现（`dshConfigWatcher.ts` 监听 settings.yaml/.credentials.yaml，防抖 + 指纹比对，仅有效配置变化时重启；web 子进程仅运行中才重启）。
 - Agent Bridge 的 `notes.update` 同时接受 `{ id, updates }` 与扁平参数 `{ id, title/content/category }`，以扁平为推荐写法（MCP 工具已按扁平暴露）。
 - 桥服务端口默认 18921，被占时自动顺延到 18971；设置页显示实际端口。
 - `electronAPI.getAgentBridge` 返回的 `audit` 是字符串数组（时间戳 + 描述），不是结构化对象。
