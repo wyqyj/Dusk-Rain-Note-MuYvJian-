@@ -8,6 +8,9 @@ const BOOTSTRAP_NAME = 'muyujian-workspace-bootstrap.json';
 const STATE_NAME = 'workspace.json';
 const MANAGED_FILES = [STATE_NAME, 'notes.json', 'attachments.json', 'task-timer-records.json'];
 const MANAGED_DIRECTORIES = ['books', 'question-books', 'attachments', 'exports', 'backups', 'plans'];
+// 备份是 gzip 压缩包，解压端必须限制总量与条目数，防止压缩炸弹写满磁盘
+const BACKUP_MAX_ENTRIES = 100_000;
+const BACKUP_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 
 type BackupEntry = { path: string; data: string; size: number; sha256: string };
 
@@ -164,10 +167,19 @@ export class WorkspaceStorage {
       if (result.canceled || !result.filePaths[0]) return { success: false, error: 'cancelled' };
       const payload = JSON.parse(zlib.gunzipSync(fs.readFileSync(result.filePaths[0])).toString('utf8'));
       if (payload?.format !== 'muyujian-workspace/v1' || !Array.isArray(payload.files)) throw new Error('不是有效的暮雨笺综合备份');
+      if (payload.files.length > BACKUP_MAX_ENTRIES) throw new Error(`备份文件条目过多（上限 ${BACKUP_MAX_ENTRIES}）`);
+      // 先整体校验并解码，全部通过后再落盘，避免部分写入的半成品状态
+      const decoded: { relative: string; data: Buffer }[] = [];
+      let totalBytes = 0;
       for (const entry of payload.files as BackupEntry[]) {
         const relative = safeRelative(entry.path);
         const data = Buffer.from(entry.data, 'base64');
         if (data.length !== entry.size || sha256(data) !== entry.sha256) throw new Error(`备份校验失败：${entry.path}`);
+        totalBytes += data.length;
+        if (totalBytes > BACKUP_MAX_TOTAL_BYTES) throw new Error('备份解压后超过大小限制');
+        decoded.push({ relative, data });
+      }
+      for (const { relative, data } of decoded) {
         const target = path.join(this.root, relative);
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, data);
@@ -190,8 +202,8 @@ export class WorkspaceStorage {
 
   readQuestionBook(folder: string): { success: boolean; folder?: string; content?: string; error?: string } {
     try {
-      const managedRoot = path.resolve(this.root, 'question-books');
-      const target = path.resolve(folder);
+      const managedRoot = fs.realpathSync(path.resolve(this.root, 'question-books'));
+      const target = fs.realpathSync(path.resolve(folder));
       if (!target.startsWith(`${managedRoot}${path.sep}`)) throw new Error('题册目录不属于当前学习工作台');
       const markdownPath = path.join(target, 'questions.md');
       if (!fs.existsSync(markdownPath)) throw new Error('对应目录中的 questions.md 不存在');

@@ -20,9 +20,10 @@ interface ElectronAPI {
   setOpacity: (opacity: number) => void;
   getOpacity: () => Promise<number>;
   getNotes: () => Promise<string>;
-  saveNotes: (notes: string) => Promise<{ success: boolean }>;
+  saveNotes: (notes: string, knownAfter?: number) => Promise<{ success: boolean }>;
   getAttachments: () => Promise<string>;
   saveAttachments: (attachments: string) => Promise<{ success: boolean }>;
+  writeAttachmentFile: (name: string, dataUrl: string) => Promise<{ success: boolean; fileName?: string; error?: string }>;
   createQuickNote: (noteJson: string) => Promise<{ success: boolean; noteId?: string; error?: string }>;
   updateQuickNoteContent: (noteId: string, content: string) => Promise<{ success: boolean; error?: string }>;
   updateQuickNote: (noteId: string, updates: string) => Promise<{ success: boolean; error?: string }>;
@@ -67,9 +68,27 @@ interface ElectronAPI {
   getAiConfig: () => Promise<{ baseUrl: string; model: string; configured: boolean; secureStorageAvailable: boolean }> ;
   saveAiConfig: (config: { baseUrl: string; model: string; apiKey?: string; clearApiKey?: boolean }) => Promise<{ success: boolean; config?: { baseUrl: string; model: string; configured: boolean; secureStorageAvailable: boolean }; error?: string }> ;
   testAiConnection: () => Promise<{ success: boolean; error?: string }> ;
-  startAi: (request: { action: 'summarize' | 'outline' | 'review-cards' | 'rewrite'; content: string }) => Promise<{ success: boolean; requestId?: string; error?: string }> ;
+  startAi: (request: { action: 'summarize' | 'outline' | 'review-cards' | 'rewrite' | 'chat'; content: string; knowledgeSourceIds?: string[]; knowledgeBundleIds?: string[] }) => Promise<{ success: boolean; requestId?: string; error?: string }> ;
   cancelAi: (requestId: string) => Promise<boolean>;
+    knowledgeGetSources: () => Promise<Array<{ id: string; type: string; title: string; count?: number; mtime?: number }>>;
+    knowledgeSearch: (query: string, options?: { sourceIds?: string[]; bundleIds?: string[]; limit?: number }) => Promise<Array<{ chunkId: string; text: string; source: { type: string; id: string; title: string }; score?: number }>>;
+  knowledgeListBundles: () => Promise<Array<{ id: string; name: string; description?: string; sourceIds: string[]; createdAt: number; updatedAt: number }>>;
+  knowledgeSaveBundle: (bundle: { id?: string; name: string; description?: string; sourceIds: string[] }) => Promise<{ id: string; name: string; description?: string; sourceIds: string[]; createdAt: number; updatedAt: number }>;
+  knowledgeDeleteBundle: (id: string) => Promise<boolean>;
+  dshAgentRun: (request: { text: string; sessionId?: string }) => Promise<{ success: boolean; sessionId?: string; finalResponse?: string; error?: string }>;
+  dshAgentStop: () => Promise<{ success: boolean }>;
+  dshAgentStatus: () => Promise<{ running: boolean }>;
+  dshAgentConfirmResolve: (request: { id: string; approved: boolean }) => Promise<boolean>;
+    dshWebStart: (preset?: string) => Promise<{ success: boolean; url?: string; error?: string }>;
+    dshWebRestart: (preset?: string) => Promise<{ success: boolean; error?: string }>;
+  dshWebStop: () => Promise<{ success: boolean }>;
+  dshWebStatus: () => Promise<{ running: boolean; url: string | null; error: string | null }>;
+  onDshAgentConfirmRequest: (callback: (request: { id: string; capability: string; description: string; params: Record<string, unknown> }) => void) => () => void;
+  onDshAgentEvent: (callback: (notification: { method: string; params: Record<string, unknown> }) => void) => () => void;
   onAiStream: (callback: (event: { requestId: string; delta?: string; done?: boolean; error?: string }) => void) => () => void;
+  getAgentBridge: () => Promise<{ enabled: boolean; bind: 'loopback' | 'lan'; token?: string; status: { running: boolean; host: string; port: number; url: string } | null; audit: string[] }>;
+  saveAgentBridge: (config: { enabled: boolean; bind: 'loopback' | 'lan' }) => Promise<{ success: boolean; error?: string }>;
+  resetAgentBridgeToken: () => Promise<{ success: boolean; token?: string; error?: string }>;
 }
 
 interface Window {

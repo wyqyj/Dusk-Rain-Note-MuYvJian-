@@ -1,10 +1,17 @@
-import { app, BrowserWindow, ipcMain, Menu, Notification, safeStorage, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, safeStorage, screen, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { execFile } from 'child_process';
 import Store from 'electron-store';
 import { WorkspaceStorage } from './workspaceStorage';
+import { enqueueFile, mergeNotes, readJsonValue, sanitizeNoteUpdates, writeAtomic } from './notesData';
+import { AgentBridge, BridgeOptions, generateBridgeToken } from './agentBridge';
+import { DshRuntime } from './dshRuntime';
+import { DshWebGui } from './dshWeb';
+import { readHarnessModelConfig, seedHarnessModelConfig, upsertHarnessModelConfig } from './dshConfig';
+import { KnowledgeService } from './knowledgeService';
 
 const pandocPath = app.isPackaged
   ? path.join(process.resourcesPath, 'pandoc', 'pandoc.exe')
@@ -18,6 +25,10 @@ let dataDir = app.isPackaged
   : path.join(__dirname, '..', 'data');
 try { fs.mkdirSync(dataDir, { recursive: true }); } catch {}
 
+// 内置 Agent 运行时：DeepSeek Harness 子进程（DSH_HOME 独立存放在 userData，不随工作区迁移）
+const dshHomeDir = path.join(app.getPath('userData'), 'dsh-home');
+try { fs.mkdirSync(dshHomeDir, { recursive: true }); } catch {}
+
 interface AppStore {
   quickNote: string;
   settings: { theme: 'light' | 'dark'; textMode: string; quickNoteShortcut: string; autoSaveInterval: number; dataPath: string; };
@@ -28,6 +39,8 @@ interface AppStore {
   initialized?: boolean;
   aiConfig?: { baseUrl: string; model: string };
   encryptedAiApiKey?: string;
+  legacyAiMigrated?: boolean;
+  agentBridge?: { enabled: boolean; bind: 'loopback' | 'lan'; token: string };
 }
 
 const store = new Store<AppStore>({
@@ -40,17 +53,52 @@ const store = new Store<AppStore>({
   },
 });
 
-type AiAction = 'summarize' | 'outline' | 'review-cards' | 'rewrite';
+type AiAction = 'summarize' | 'outline' | 'review-cards' | 'rewrite' | 'chat';
 type AiPublicConfig = { baseUrl: string; model: string; configured: boolean; secureStorageAvailable: boolean };
 
 const aiRequests = new Map<string, AbortController>();
 const defaultAiConfig = { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' };
 
-function getAiConfig(): AiPublicConfig {
+function getLegacyAiConfig(): { baseUrl: string; model: string } {
   const saved = store.get('aiConfig');
-  const config = { ...defaultAiConfig, ...saved };
-  return { ...config, configured: Boolean(store.get('encryptedAiApiKey')), secureStorageAvailable: safeStorage.isEncryptionAvailable() };
+  return { ...defaultAiConfig, ...saved };
 }
+
+/** AI 助手展示用的当前配置：优先 dsh home（Agent 页 GUI 里改的同一份），旧版 store 兜底 */
+function getAiConfig(): AiPublicConfig {
+  const harness = readHarnessModelConfig(dshHomeDir);
+  if (harness) {
+    // Key 也可能还在旧版安全存储里（迁移未完成时），不要把状态徽标误报为「未配置」
+    const hasKey = Boolean(harness.apiKey) || Boolean(store.get('encryptedAiApiKey'));
+    return { baseUrl: harness.baseUrl, model: harness.model, configured: hasKey, secureStorageAvailable: true };
+  }
+  const legacy = getLegacyAiConfig();
+  return { ...legacy, configured: Boolean(store.get('encryptedAiApiKey')), secureStorageAvailable: safeStorage.isEncryptionAvailable() };
+}
+
+/** AI 助手问答直连用的完整连接信息（含 Key），dsh home 优先、旧版 safeStorage 兜底 */
+function resolveAiConnection(): { baseUrl: string; model: string; apiKey: string } {
+  const harness = readHarnessModelConfig(dshHomeDir);
+  if (harness?.apiKey) {
+    return { baseUrl: validateAiBaseUrl(harness.baseUrl), model: harness.model, apiKey: harness.apiKey };
+  }
+  const legacy = getLegacyAiConfig();
+  return { baseUrl: validateAiBaseUrl(legacy.baseUrl), model: legacy.model, apiKey: decryptAiApiKey() };
+}
+
+// 一次性迁移：旧版（electron-store + safeStorage）AI 配置播种到 dsh home，之后由 Agent 页 GUI 统一管理
+void (() => {
+  try {
+    if (store.get('legacyAiMigrated')) return;
+    const saved = store.get('aiConfig');
+    if (saved?.baseUrl && saved.model) {
+      let apiKey: string | null = null;
+      try { apiKey = decryptAiApiKey(); } catch { /* 没有旧 key */ }
+      seedHarnessModelConfig(dshHomeDir, { baseUrl: validateAiBaseUrl(saved.baseUrl), model: saved.model, apiKey });
+    }
+    store.set('legacyAiMigrated', true);
+  } catch { /* 迁移失败不影响启动，Agent 启动时还会再播种 */ }
+})();
 
 function decryptAiApiKey(): string {
   const encrypted = store.get('encryptedAiApiKey');
@@ -63,6 +111,8 @@ function validateAiBaseUrl(value: string): string {
   const url = new URL(value);
   const isLocal = url.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
   if (url.protocol !== 'https:' && !isLocal) throw new Error('AI Base URL 必须使用 HTTPS；仅本地模型允许 HTTP');
+  // OpenAI 兼容网关的端点都在 /v1 下；用户只填到根域名时自动补全，避免落到网关网站首页（导致 200 HTML 假响应）
+  if (url.pathname === '' || url.pathname === '/') url.pathname = '/v1';
   return url.toString().replace(/\/$/, '');
 }
 
@@ -73,6 +123,7 @@ function aiInstructions(action: AiAction): string {
     outline: '整理为层级清晰的 Markdown 提纲，保留原意，不添加无依据内容。',
     'review-cards': '生成可复习的问答卡片。每张使用“## 问题”和“答案”两行，覆盖关键概念而不重复。',
     rewrite: '在不改变事实和立场的前提下润色文字，使表达清晰、简练、适合笔记阅读。',
+    chat: '自由对话：直接、准确地回答用户问题；涉及数学公式时使用 $…$ 或 $$…$$ 记号；篇幅适中，不堆砌客套话。',
   };
   return `${common}\n\n任务：${actions[action]}`;
 }
@@ -81,28 +132,79 @@ function parseSseEvents(buffer: string, onDelta: (delta: string) => void): strin
   const events = buffer.split(/\r?\n\r?\n/);
   const remaining = events.pop() || '';
   for (const event of events) {
-    const type = event.match(/^event:\s*(.+)$/m)?.[1]?.trim();
     const payload = event.match(/^data:\s*(.+)$/m)?.[1]?.trim();
-    if (type !== 'response.output_text.delta' || !payload || payload === '[DONE]') continue;
+    if (!payload || payload === '[DONE]') continue;
     try {
       const parsed = JSON.parse(payload);
-      if (typeof parsed.delta === 'string') onDelta(parsed.delta);
+      // chat.completion.chunk：choices[0].delta.content；兼容少数网关透传的 delta 字段
+      if (typeof parsed.delta === 'string') { onDelta(parsed.delta); continue; }
+      const choice = parsed.choices?.[0];
+      const text = choice?.delta?.content ?? choice?.message?.content;
+      if (typeof text === 'string' && text) onDelta(text);
     } catch { /* Ignore incomplete or provider-specific events. */ }
   }
   return remaining;
 }
 
-async function requestAi(sender: Electron.WebContents, requestId: string, action: AiAction, content: string): Promise<void> {
+/**
+ * 主进程内统一的外发请求通道。
+ * 全局 fetch（undici）不走系统代理，在靠 Clash/VPN 出口的网络上会直连超时；
+ * Electron 的 net.fetch（Chromium 内核）自动遵循系统代理设置，优先使用它。
+ */
+async function aiFetch(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
+): Promise<Response> {
+  if (typeof net?.fetch === 'function') {
+    return net.fetch(url, init) as unknown as Promise<Response>;
+  }
+  return fetch(url, init);
+}
+
+
+function buildSystemPromptWithKnowledge(action: AiAction, query: string, options?: { sourceIds?: string[]; bundleIds?: string[] }): string {
+  let system = aiInstructions(action);
+  if (knowledgeService && action === 'chat') {
+    try {
+      const hits = knowledgeService.search(query, { sourceIds: options?.sourceIds, bundleIds: options?.bundleIds, limit: 5 });
+      if (hits.length > 0) {
+        const contextText = hits
+          .map((h, i) => `[${i + 1}] 来源《${h.source.title}》:\n${h.text}`)
+          .join('\n\n');
+        system += `\n\n### 参考知识库资料\n请结合以下参考资料作答（若与常识冲突以资料为准，必要时在回答中指出来源）：\n${contextText}`;
+      }
+    } catch (err) {
+      console.error('[knowledge] search error:', err);
+    }
+  }
+  return system;
+}
+
+async function requestAi(sender: Electron.WebContents, requestId: string, action: AiAction, content: string, knowledgeOptions?: { sourceIds?: string[]; bundleIds?: string[] }): Promise<void> {
   const controller = new AbortController();
   aiRequests.set(requestId, controller);
+  // 窗口可能在生成过程中被关闭，向已销毁的 webContents 发送会抛异常
+  const send = (payload: Record<string, unknown>): boolean => {
+    if (sender.isDestroyed()) { console.warn('[ai] sender destroyed, drop event', payload); return false; }
+    sender.send('ai-stream', { requestId, ...payload });
+    return true;
+  };
   try {
-    const config = getAiConfig();
-    const apiKey = decryptAiApiKey();
-    const response = await fetch(`${validateAiBaseUrl(config.baseUrl)}/responses`, {
+    // 与 Agent 共用同一条网关路由（dsh home 优先）；网关实测支持 /chat/completions
+    const connection = resolveAiConnection();
+    const response = await aiFetch(`${connection.baseUrl}/chat/completions`, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ model: config.model, instructions: aiInstructions(action), input: content, stream: true, max_output_tokens: 2400 }),
+      headers: { 'Authorization': `Bearer ${connection.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({
+        model: connection.model,
+        messages: [
+          { role: 'system', content: buildSystemPromptWithKnowledge(action, content, knowledgeOptions) },
+          { role: 'user', content },
+        ],
+        stream: true,
+        max_tokens: 2400,
+      }),
     });
     if (!response.ok || !response.body) {
       const detail = (await response.text()).slice(0, 500);
@@ -112,14 +214,18 @@ async function requestAi(sender: Electron.WebContents, requestId: string, action
     const decoder = new TextDecoder();
     let pending = '';
     while (true) {
+      if (sender.isDestroyed()) { controller.abort(); break; }
       const next = await reader.read();
       if (next.done) break;
-      pending = parseSseEvents(pending + decoder.decode(next.value, { stream: true }), (delta) => sender.send('ai-stream', { requestId, delta }));
+      pending = parseSseEvents(pending + decoder.decode(next.value, { stream: true }), (delta) => { send({ delta }); });
     }
-    parseSseEvents(pending + decoder.decode(), (delta) => sender.send('ai-stream', { requestId, delta }));
-    sender.send('ai-stream', { requestId, done: true });
+    parseSseEvents(pending + decoder.decode(), (delta) => { send({ delta }); });
+    send({ done: true });
   } catch (error: any) {
-    sender.send('ai-stream', { requestId, done: true, error: error?.name === 'AbortError' ? '已取消生成。' : (error?.message || 'AI 请求失败') });
+    // undici 的 "fetch failed" 不带细节，真实原因（TLS/代理/DNS）在 cause 里
+    const cause = (error as any)?.cause;
+    const detail = cause ? `${cause.code || cause.name || ''} ${cause.message || ''}`.trim() : '';
+    send({ done: true, error: error?.name === 'AbortError' ? '已取消生成。' : (`${error?.message || 'AI 请求失败'}${detail ? `（${detail}）` : ''}`) });
   } finally {
     aiRequests.delete(requestId);
   }
@@ -288,12 +394,82 @@ $$e^x = \\sum_{n=0}^{\\infty} \\frac{x^n}{n!} = 1 + x + \\frac{x^2}{2!} + \\frac
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceStorage: WorkspaceStorage;
+let agentBridge: AgentBridge | null = null;
+let knowledgeService: KnowledgeService | null = null;
+function getNormalizedAiModelConfig(): { baseUrl: string; model: string } | null {
+  const { baseUrl, model } = getAiConfig();
+  try { return { baseUrl: validateAiBaseUrl(baseUrl), model }; } catch { return null; }
+}
+const dshRuntime = new DshRuntime({
+  workspaceRoot: () => workspaceStorage.getRoot(),
+  getApiKey: decryptAiApiKey,
+  getModelConfig: () => getNormalizedAiModelConfig(),
+  homeDir: dshHomeDir,
+  getBridgeEndpoint: ensureInternalAgentBridge,
+});
+// 完整 dsh Web GUI 运行时（Agent 页嵌入用），与 sdk 运行时共用 DSH_HOME / 内部 Bridge
+const dshWebGui = new DshWebGui({
+  homeDir: dshHomeDir,
+  workspaceRoot: () => workspaceStorage.getRoot(),
+  getModelConfig: () => getNormalizedAiModelConfig(),
+  getApiKey: decryptAiApiKey,
+  getBridgeEndpoint: ensureInternalAgentBridge,
+  log: (line) => console.warn(line),
+});
+// 内置 Agent 专用 Bridge：独立于用户配置的"对外接入"桥，
+// 只绑 loopback、token 每次启动随机生成且不落盘，仅 dsh 子进程回调用。
+let internalAgentBridge: AgentBridge | null = null;
+let internalAgentBridgeToken = '';
+// 内置 Agent 写操作确认：挂在内存里的待决请求，渲染端回执或 120s 超时拒绝
+let agentConfirmSeq = 0;
+const pendingAgentConfirms = new Map<string, (approved: boolean) => void>();
+const AGENT_CONFIRM_TIMEOUT_MS = 120_000;
+
+function requestAgentConfirm(req: { capability: string; description: string; params: Record<string, unknown> }): Promise<boolean> {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return Promise.resolve(false);
+  const id = `agent-confirm-${Date.now()}-${++agentConfirmSeq}`;
+  return new Promise((resolve) => {
+    pendingAgentConfirms.set(id, resolve);
+    win.webContents.send('dsh-agent-confirm-request', { id, ...req });
+    setTimeout(() => {
+      if (pendingAgentConfirms.delete(id)) resolve(false);
+    }, AGENT_CONFIRM_TIMEOUT_MS);
+  });
+}
+
+async function ensureInternalAgentBridge(): Promise<{ url: string; token: string }> {
+  if (!internalAgentBridge || !internalAgentBridge.status().running) {
+    internalAgentBridgeToken = generateBridgeToken();
+    internalAgentBridge = new AgentBridge(
+      { enabled: true, bind: 'loopback', token: internalAgentBridgeToken, portPreferred: 22921 },
+      { workspaceRoot: () => workspaceStorage.getRoot(), confirmWrite: requestAgentConfirm },
+    );
+    await internalAgentBridge.start();
+  }
+  const status = internalAgentBridge.status();
+  return { url: `http://127.0.0.1:${status.port}`, token: internalAgentBridgeToken };
+}
 const quickNoteWindows: BrowserWindow[] = [];
 const MAX_QUICK_NOTE_WINDOWS = 10;
 let todayPlanWindow: BrowserWindow | null = null;
 let timerStatsWindow: BrowserWindow | null = null;
 let lastQuickNoteCreateTime = 0;
 let contentSecurityPolicyInstalled = false;
+
+function clampOpacity(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1;
+  return Math.max(0.2, Math.min(1, value));
+}
+
+/** 依次尝试常见中文字体，全部缺失时返回最后一次错误。 */
+const PDF_CJK_FONT_CANDIDATES = ['Microsoft YaHei', 'Noto Sans CJK SC', 'SimSun', 'PingFang SC'];
+
+function runPandoc(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(pandocPath, args, (err) => (err ? reject(err) : resolve()));
+  });
+}
 
 function isPathWithin(targetPath: string, roots: string[]): boolean {
   try {
@@ -342,12 +518,41 @@ function installContentSecurityPolicy(win: BrowserWindow): void {
   if (contentSecurityPolicyInstalled) return;
   contentSecurityPolicyInstalled = true;
   win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    // dsh Web GUI 等回环服务托管自己的应用与 CSP（其前端依赖 eval），不要再覆盖
+    if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(details.url) && !details.url.startsWith('http://localhost:5173')) {
+      callback({});
+      return;
+    }
     const headers = { ...details.responseHeaders };
+    // 开发模式下 vite 需要 dev server 来源 + react-refresh 的内联引导脚本
+    const devSrc = app.isPackaged ? '' : ' http://localhost:5173 ws://localhost:5173';
+    const scriptSrc = app.isPackaged ? "script-src 'self'" : "script-src 'self' 'unsafe-inline'";
     headers['Content-Security-Policy'] = [
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; font-src 'self' data:; connect-src 'self' http://localhost:5173 ws://localhost:5173; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
+      // dsh web GUI 通过 <webview> 内嵌，回环地址动态端口，需放行 frame-src
+      `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:; font-src 'self' data:; connect-src 'self'${devSrc}; object-src 'none'; frame-src http://127.0.0.1:* http://localhost:*; base-uri 'self'; form-action 'none'`,
     ];
     callback({ responseHeaders: headers });
   });
+}
+
+/** 把内容中的 attachment: 令牌替换为 attachments/ 目录下的绝对路径，供 pandoc 使用。 */
+function resolveAttachmentTokens(content: string): string {
+  if (!content.includes('attachment:')) return content;
+  return content.replace(/attachment:([^\s()"'\]]+)/g, (_m, name: string) =>
+    path.join(workspaceStorage.getRoot(), 'attachments', path.basename(name))
+  );
+}
+
+/** 优先加载构建产物；打包后发现渲染产物缺失时直接报错，不回退到本机开发地址。 */
+function loadRenderer(win: BrowserWindow, hash?: string): void {
+  const rendererPath = path.join(__dirname, '../renderer/index.html');
+  if (fs.existsSync(rendererPath)) {
+    void win.loadFile(rendererPath, hash ? { hash } : undefined);
+  } else if (!app.isPackaged) {
+    void win.loadURL(`http://localhost:5173${hash ? `#${hash}` : ''}`);
+  } else {
+    dialog.showErrorBox('暮雨笺启动失败', '未找到应用界面资源，请重新安装后重试。');
+  }
 }
 
 function resolveMainWindowBounds(savedBounds?: AppStore['windowBounds']): Electron.Rectangle {
@@ -378,13 +583,11 @@ function createMainWindow(): void {
     minWidth: 900, minHeight: 600, title: '暮雨笺',
     frame: false,
     backgroundColor: store.get('settings.theme') === 'dark' ? '#030712' : '#ffffff',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true },
     show: false,
   });
   installContentSecurityPolicy(mainWindow);
-  const rendererPath = path.join(__dirname, '../renderer/index.html');
-  if (fs.existsSync(rendererPath)) mainWindow.loadFile(rendererPath);
-  else mainWindow.loadURL('http://localhost:5173');
+  loadRenderer(mainWindow);
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('close', () => { if (mainWindow) store.set('windowBounds', mainWindow.getBounds()); });
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -410,9 +613,7 @@ function createQuickNoteWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
     show: false,
   });
-  const rendererPath = path.join(__dirname, '../renderer/index.html');
-  if (fs.existsSync(rendererPath)) win.loadFile(rendererPath, { hash: '/quick-note' });
-  else win.loadURL('http://localhost:5173#/quick-note');
+  loadRenderer(win, '/quick-note');
   win.once('ready-to-show', () => win.show());
   let closingFromRenderer = false;
   win.on('close', (e) => {
@@ -436,7 +637,7 @@ function createQuickNoteWindow(): void {
 function createTodayPlanWindow(): void {
   if (todayPlanWindow) { todayPlanWindow.show(); todayPlanWindow.focus(); return; }
   const savedBounds = store.get('todayPlanBounds') as any;
-  const savedOpacity = store.get('todayPlanOpacity') ?? 1;
+  const savedOpacity = clampOpacity(store.get('todayPlanOpacity'));
   todayPlanWindow = new BrowserWindow({
     width: savedBounds?.width || 420, height: savedBounds?.height || 600,
     x: savedBounds?.x, y: savedBounds?.y,
@@ -446,9 +647,7 @@ function createTodayPlanWindow(): void {
     show: false,
   });
   todayPlanWindow.setOpacity(savedOpacity);
-  const rendererPath = path.join(__dirname, '../renderer/index.html');
-  if (fs.existsSync(rendererPath)) todayPlanWindow.loadFile(rendererPath, { hash: '/today-plan' });
-  else todayPlanWindow.loadURL('http://localhost:5173#/today-plan');
+  loadRenderer(todayPlanWindow, '/today-plan');
   todayPlanWindow.once('ready-to-show', () => todayPlanWindow?.show());
   todayPlanWindow.on('close', () => { if (todayPlanWindow) store.set('todayPlanBounds', todayPlanWindow.getBounds()); });
   todayPlanWindow.on('closed', () => { todayPlanWindow = null; });
@@ -463,9 +662,7 @@ function createTimerStatsWindow(): void {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
     show: false,
   });
-  const rendererPath = path.join(__dirname, '../renderer/index.html');
-  if (fs.existsSync(rendererPath)) timerStatsWindow.loadFile(rendererPath, { hash: '/timer-stats' });
-  else timerStatsWindow.loadURL('http://localhost:5173#/timer-stats');
+  loadRenderer(timerStatsWindow, '/timer-stats');
   timerStatsWindow.once('ready-to-show', () => timerStatsWindow?.show());
   timerStatsWindow.on('closed', () => { timerStatsWindow = null; });
 }
@@ -487,33 +684,68 @@ function setupIPC(): void {
         store.set('encryptedAiApiKey', safeStorage.encryptString(input.apiKey.trim()).toString('base64'));
       }
       store.set('aiConfig', { baseUrl, model });
+      // 同步到 dsh home，保证 AI 助手与 Agent 页用的是同一份网关配置
+      upsertHarnessModelConfig(dshHomeDir, {
+        baseUrl, model,
+        apiKey: typeof input.apiKey === 'string' && input.apiKey.trim() ? input.apiKey.trim() : null,
+        clearApiKey: input.clearApiKey === true,
+      });
+      // 网关/模型/Key 变化：重建 dsh 运行时，下次调用用新配置
+      void dshRuntime.restart();
+      void dshWebGui.restart();
       return { success: true, config: getAiConfig() };
     } catch (error: any) { return { success: false, error: error?.message || '保存 AI 配置失败' }; }
   });
   ipcMain.handle('ai-test-connection', async () => {
     try {
-      const config = getAiConfig();
-      const apiKey = decryptAiApiKey();
-      const response = await fetch(`${validateAiBaseUrl(config.baseUrl)}/responses`, {
+      const connection = resolveAiConnection();
+      const response = await aiFetch(`${connection.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: config.model, input: 'Reply with OK.', max_output_tokens: 16 }),
+        headers: { 'Authorization': `Bearer ${connection.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: connection.model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 16 }),
       });
       if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `HTTP ${response.status}`);
       return { success: true };
     } catch (error: any) { return { success: false, error: error?.message || '连接测试失败' }; }
   });
-  ipcMain.handle('ai-start', (event: Electron.IpcMainInvokeEvent, value: unknown) => {
+  
+    // ---- 知识库能力 IPC ----
+    ipcMain.handle('knowledge-get-sources', () => {
+      if (!knowledgeService) return [];
+      return knowledgeService.listAvailableSources();
+    });
+    ipcMain.handle('knowledge-search', (_e: any, query: string, options?: { sourceIds?: string[]; bundleIds?: string[]; limit?: number }) => {
+      if (!knowledgeService) return [];
+      return knowledgeService.search(query, options);
+    });
+    ipcMain.handle('knowledge-bundles-list', () => {
+      if (!knowledgeService) return [];
+      return knowledgeService.listBundles();
+    });
+    ipcMain.handle('knowledge-bundles-save', (_e: any, bundle: any) => {
+      if (!knowledgeService) return null;
+      return knowledgeService.saveBundle(bundle);
+    });
+    ipcMain.handle('knowledge-bundles-delete', (_e: any, id: string) => {
+      if (!knowledgeService) return false;
+      return knowledgeService.deleteBundle(id);
+    });
+
+    
+ipcMain.handle('ai-start', (event: Electron.IpcMainInvokeEvent, value: unknown) => {
     try {
       if (!value || typeof value !== 'object') throw new Error('AI 请求无效');
-      const input = value as { action?: unknown; content?: unknown };
+      const input = value as { action?: unknown; content?: unknown; knowledgeSourceIds?: unknown; knowledgeBundleIds?: unknown };
       const action = input.action;
       const content = input.content;
-      if (!['summarize', 'outline', 'review-cards', 'rewrite'].includes(String(action))) throw new Error('不支持的 AI 操作');
-      if (typeof content !== 'string' || !content.trim()) throw new Error('没有可供整理的笔记内容');
-      if (content.length > 100_000) throw new Error('单次最多整理 100,000 个字符，请先选择或拆分内容');
+      const knowledgeSourceIds = Array.isArray(input.knowledgeSourceIds) ? input.knowledgeSourceIds.map(String) : undefined;
+      const knowledgeBundleIds = Array.isArray(input.knowledgeBundleIds) ? input.knowledgeBundleIds.map(String) : undefined;
+      const allowed: AiAction[] = ['summarize', 'outline', 'review-cards', 'rewrite', 'chat'];
+      if (!allowed.includes(String(action) as AiAction)) throw new Error('不支持的 AI 操作');
+      if (typeof content !== 'string' || !content.trim()) throw new Error('没有可发送的内容');
+      if (content.length > 100_000) throw new Error('单次最多发送 100,000 个字符，请先拆分内容');
       const requestId = `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      void requestAi(event.sender, requestId, action as AiAction, content);
+      void requestAi(event.sender, requestId, action as AiAction, content, { sourceIds: knowledgeSourceIds, bundleIds: knowledgeBundleIds });
       return { success: true, requestId };
     } catch (error: any) { return { success: false, error: error?.message || '启动 AI 请求失败' }; }
   });
@@ -522,6 +754,47 @@ function setupIPC(): void {
     const controller = aiRequests.get(requestId);
     if (!controller) return false;
     controller.abort();
+    return true;
+  });
+  // ---- 内置 Agent（DeepSeek Harness 子进程） ----
+  ipcMain.handle('dsh-agent-run', async (event: Electron.IpcMainInvokeEvent, value: unknown) => {
+    try {
+      const input = (value && typeof value === 'object' ? value : {}) as { text?: unknown; sessionId?: unknown };
+      const text = typeof input.text === 'string' ? input.text.trim() : '';
+      if (!text) throw new Error('没有可发送的内容');
+      const sessionId = typeof input.sessionId === 'string' && input.sessionId ? input.sessionId : undefined;
+      const sender = event.sender;
+      const result = await dshRuntime.run(sessionId, text, (notification) => {
+        if (!sender.isDestroyed()) sender.send('dsh-agent-event', notification);
+      });
+      return { success: true, ...result };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Agent 运行失败' };
+    }
+  });
+  ipcMain.handle('dsh-agent-stop', async () => {
+    // SDK 协议无轮次中取消：重启运行时，会话历史保留在 DSH_HOME
+    await dshRuntime.restart();
+    return { success: true };
+  });
+  ipcMain.handle('dsh-agent-status', () => ({ running: dshRuntime.isRunning() }));
+  ipcMain.handle('dsh-web-start', async () => {
+    try {
+      const url = await dshWebGui.ensureUrl();
+      return { success: true, url };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'dsh web 启动失败' };
+    }
+  });
+  ipcMain.handle('dsh-web-stop', async () => { await dshWebGui.stop(); return { success: true }; });
+  ipcMain.handle('dsh-web-status', () => dshWebGui.status());
+  ipcMain.handle('dsh-agent-confirm-resolve', (_e: any, value: unknown) => {
+    const input = (value && typeof value === 'object' ? value : {}) as { id?: unknown; approved?: unknown };
+    if (typeof input.id !== 'string') return false;
+    const resolve = pendingAgentConfirms.get(input.id);
+    if (!resolve) return false;
+    pendingAgentConfirms.delete(input.id);
+    resolve(input.approved === true);
     return true;
   });
   ipcMain.handle('workspace-get-state', () => workspaceStorage.readState());
@@ -553,6 +826,12 @@ function setupIPC(): void {
     if (result.success) {
       dataDir = workspaceStorage.getRoot();
       store.set('settings', { ...store.get('settings'), dataPath: dataDir });
+      // 工作区变化：dsh 运行时下次以新 cwd 重建；内部 Bridge 也按新根重建
+      void dshRuntime.restart();
+      void dshWebGui.restart();
+      const old = internalAgentBridge;
+      internalAgentBridge = null;
+      void old?.stop();
     }
     return result;
   });
@@ -631,12 +910,11 @@ function setupIPC(): void {
   ipcMain.on('close-today-plan-window', () => todayPlanWindow?.close());
   ipcMain.on('minimize-today-plan-window', () => todayPlanWindow?.minimize());
   ipcMain.on('set-opacity', (_e: any, opacity: number) => {
-    if (todayPlanWindow && !todayPlanWindow.isDestroyed()) {
-      todayPlanWindow.setOpacity(Math.max(0.2, Math.min(1, opacity)));
-      store.set('todayPlanOpacity', opacity);
-    }
+    const clamped = clampOpacity(opacity);
+    if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.setOpacity(clamped);
+    store.set('todayPlanOpacity', clamped);
   });
-  ipcMain.handle('get-opacity', () => store.get('todayPlanOpacity') ?? 1);
+  ipcMain.handle('get-opacity', () => clampOpacity(store.get('todayPlanOpacity')));
 
   ipcMain.on('toggle-timer-stats-window', createTimerStatsWindow);
   ipcMain.on('close-timer-stats-window', () => timerStatsWindow?.close());
@@ -644,6 +922,7 @@ function setupIPC(): void {
 
   const notesPath = () => path.join(workspaceStorage.getRoot(), 'notes.json');
   const attachmentsPath = () => path.join(workspaceStorage.getRoot(), 'attachments.json');
+  const attachmentsDir = () => path.join(workspaceStorage.getRoot(), 'attachments');
   const notifyAllReload = () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('reload-notes');
     if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.webContents.send('reload-notes');
@@ -651,50 +930,93 @@ function setupIPC(): void {
 
   ipcMain.handle('get-notes', () => { try { const file = notesPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
   ipcMain.handle('get-attachments', () => { try { const file = attachmentsPath(); return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '[]'; } catch { return '[]'; } });
-  ipcMain.handle('save-attachments', (_e: any, data: string) => {
-    return writePayload(attachmentsPath(), data, 'array');
-  });
-  ipcMain.handle('save-notes', (_e: any, n: string) => {
-    const result = writePayload(notesPath(), n, 'array');
-    if (result.success) notifyAllReload();
-    return result;
-  });
-  ipcMain.handle('create-quick-note', (_e: any, noteJson: string) => {
+  ipcMain.handle('attachment-write-file', (_e: any, name: unknown, dataUrl: unknown) => {
     try {
-      let notes: any[] = [];
-      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
-      const note = JSON.parse(noteJson);
-      notes.unshift(note);
-      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
-      notifyAllReload();
-      return { success: true, noteId: note.id };
+      if (typeof name !== 'string' || typeof dataUrl !== 'string') throw new Error('附件参数无效');
+      const match = dataUrl.match(/^data:image\/(png|jpeg|gif|webp|bmp|avif);base64,(.+)$/s);
+      if (!match) throw new Error('仅支持 PNG/JPEG/GIF/WebP/BMP/AVIF 图片');
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 20 * 1024 * 1024) throw new Error('图片大小不能超过 20MB');
+      const ext = match[1];
+      const safeBase = path.basename(name).replace(/\.[^.]+$/, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 60) || 'image';
+      const fileName = `${Date.now().toString(36)}-${crypto.randomUUID()}-${safeBase}.${ext}`;
+      return enqueueFile(path.join(attachmentsDir(), fileName), () => {
+        fs.mkdirSync(attachmentsDir(), { recursive: true });
+        fs.writeFileSync(path.join(attachmentsDir(), fileName), buffer);
+        return { success: true, fileName };
+      });
     } catch (err: any) { return { success: false, error: err.message }; }
   });
-  ipcMain.handle('update-quick-note-content', (_e: any, noteId: string, content: string) => {
+  ipcMain.handle('save-attachments', (_e: any, data: string) => {
+    // 校验仍在写队列之外完成，写盘本身串行化，避免与其他写入交错
+    if (typeof data !== 'string' || data.length > 100 * 1024 * 1024) return { success: false, error: '数据内容无效或超过 100MB 限制' };
     try {
-      let notes: any[] = [];
-      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
+      if (!Array.isArray(JSON.parse(data))) return { success: false, error: '数据格式无效' };
+    } catch { return { success: false, error: '数据格式无效' }; }
+    return enqueueFile(attachmentsPath(), () => {
+      writeAtomic(attachmentsPath(), data);
+      return { success: true };
+    });
+  });
+  ipcMain.handle('save-notes', (_e: any, n: string, knownAfter?: number) => {
+    if (typeof n !== 'string' || n.length > 100 * 1024 * 1024) return { success: false, error: '数据内容无效或超过 100MB 限制' };
+    let incoming: unknown;
+    try {
+      incoming = JSON.parse(n);
+      if (!Array.isArray(incoming)) return { success: false, error: '数据格式无效' };
+    } catch { return { success: false, error: '数据格式无效' }; }
+    const snapshotTime = typeof knownAfter === 'number' && Number.isFinite(knownAfter) ? knownAfter : 0;
+    return enqueueFile(notesPath(), () => {
+      // 与磁盘最新内容按 id 合并，避免防抖整文件覆写覆盖其他窗口刚写入的便签
+      const merged = mergeNotes(readJsonValue(notesPath(), []), incoming, snapshotTime);
+      writeAtomic(notesPath(), JSON.stringify(merged, null, 2));
+      notifyAllReload();
+      return { success: true };
+    });
+  });
+  ipcMain.handle('create-quick-note', (_e: any, noteJson: string) => {
+    let note: any;
+    try {
+      note = JSON.parse(noteJson);
+      if (!note || typeof note !== 'object' || typeof note.id !== 'string') throw new Error('便签内容无效');
+    } catch (err: any) { return { success: false, error: err.message }; }
+    return enqueueFile(notesPath(), () => {
+      const notes = (readJsonValue(notesPath(), []) as any[]);
+      notes.unshift(note);
+      writeAtomic(notesPath(), JSON.stringify(notes, null, 2));
+      notifyAllReload();
+      return { success: true, noteId: note.id };
+    });
+  });
+  ipcMain.handle('update-quick-note-content', (_e: any, noteId: string, content: string) => {
+    if (typeof noteId !== 'string' || typeof content !== 'string') return { success: false, error: '参数无效' };
+    return enqueueFile(notesPath(), () => {
+      const notes = (readJsonValue(notesPath(), []) as any[]);
       const idx = notes.findIndex((n: any) => n.id === noteId);
       if (idx === -1) return { success: false, error: 'note not found' };
       notes[idx].content = content;
       notes[idx].updatedAt = Date.now();
-      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
+      writeAtomic(notesPath(), JSON.stringify(notes, null, 2));
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('reload-notes');
       if (todayPlanWindow && !todayPlanWindow.isDestroyed()) todayPlanWindow.webContents.send('reload-notes');
       return { success: true };
-    } catch (err: any) { return { success: false, error: err.message }; }
+    });
   });
   ipcMain.handle('update-quick-note', (_e: any, noteId: string, updates: string) => {
-    try {
-      let notes: any[] = [];
-      try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { notes = []; }
+    if (typeof noteId !== 'string' || typeof updates !== 'string') return { success: false, error: '参数无效' };
+    let parsed: unknown;
+    try { parsed = JSON.parse(updates); } catch (err: any) { return { success: false, error: err.message }; }
+    const clean = sanitizeNoteUpdates(parsed);
+    delete clean.updatedAt;
+    return enqueueFile(notesPath(), () => {
+      const notes = (readJsonValue(notesPath(), []) as any[]);
       const idx = notes.findIndex((n: any) => n.id === noteId);
       if (idx === -1) return { success: false, error: 'note not found' };
-      Object.assign(notes[idx], JSON.parse(updates), { updatedAt: Date.now() });
-      fs.writeFileSync(notesPath(), JSON.stringify(notes, null, 2), 'utf-8');
+      Object.assign(notes[idx], clean, { updatedAt: Date.now() });
+      writeAtomic(notesPath(), JSON.stringify(notes, null, 2));
       notifyAllReload();
       return { success: true };
-    } catch (err: any) { return { success: false, error: err.message }; }
+    });
   });
   ipcMain.on('reload-notes-from-disk', notifyAllReload);
   ipcMain.on('select-note', (_e: any, noteId: string) => {
@@ -708,7 +1030,9 @@ function setupIPC(): void {
     try { const file = notesPath(); if (fs.existsSync(file)) notes = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
     try { const file = timerRecordsPath(); if (fs.existsSync(file)) timerRecords = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
     try { const file = attachmentsPath(); if (fs.existsSync(file)) attachments = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
-    return JSON.stringify({ version: 3, exportedAt: Date.now(), preferences: store.store, notes, timerRecords, attachments }, null, 2);
+    // encryptedAiApiKey 与系统安全存储绑定，agentBridge 含访问 Token，均迁移无效且会泄露访问权，导出时剔除
+    const { encryptedAiApiKey: _omittedApiKey, agentBridge: _omittedBridge, ...exportablePreferences } = store.store as unknown as Record<string, unknown>;
+    return JSON.stringify({ version: 3, exportedAt: Date.now(), preferences: exportablePreferences, notes, timerRecords, attachments }, null, 2);
   });
   ipcMain.handle('import-data', (_e: any, data: string) => {
     try {
@@ -716,7 +1040,7 @@ function setupIPC(): void {
       if (!backup || typeof backup !== 'object') return { success: false, error: 'invalid backup' };
       const preferences = backup.preferences && typeof backup.preferences === 'object' ? backup.preferences : backup;
       Object.keys(preferences).forEach((key) => {
-        if (!['version', 'exportedAt', 'notes', 'timerRecords', 'attachments'].includes(key)) store.set(key, preferences[key]);
+        if (!['version', 'exportedAt', 'notes', 'timerRecords', 'attachments', 'encryptedAiApiKey', 'agentBridge'].includes(key)) store.set(key, preferences[key]);
       });
       if (Array.isArray(backup.notes)) fs.writeFileSync(notesPath(), JSON.stringify(backup.notes, null, 2), 'utf-8');
       if (backup.timerRecords && typeof backup.timerRecords === 'object') fs.writeFileSync(timerRecordsPath(), JSON.stringify(backup.timerRecords, null, 2), 'utf-8');
@@ -739,7 +1063,8 @@ function setupIPC(): void {
     } catch (error: any) { return { success: false, error: error.message }; }
   });
   // 导出 Word：用 pandoc 将原始 Markdown/LaTeX 编译为 docx
-  ipcMain.handle('export-word', async (_e: any, title: string, content: string) => {
+  ipcMain.handle('export-word', async (_e: any, title: string, rawContent: string) => {
+    const content = resolveAttachmentTokens(rawContent);
     const { dialog } = require('electron');
     const win = BrowserWindow.getFocusedWindow();
     if (!win) return { success: false, error: 'no window' };
@@ -764,11 +1089,7 @@ function setupIPC(): void {
           : content;
       const finalFormat = isLatex || /\\begin\{(equation|align|gather|eqnarray)\*?\}/.test(content) ? 'latex' : inputFormat;
       fs.writeFileSync(tmpInput, source, 'utf-8');
-      await new Promise<void>((resolve, reject) => {
-        execFile(pandocPath, [tmpInput, '-f', finalFormat, '-t', 'docx', '--mathml', '-o', tmpOutput], (err) => {
-          if (err) reject(err); else resolve();
-        });
-      });
+      await runPandoc([tmpInput, '-f', finalFormat, '-t', 'docx', '--mathml', '-o', tmpOutput]);
       fs.copyFileSync(tmpOutput, result.filePath);
       return { success: true, path: result.filePath };
     } catch (err: any) {
@@ -779,7 +1100,8 @@ function setupIPC(): void {
     }
   });
   // 导出 PDF：用 pandoc + xelatex 编译（需要用户已安装 LaTeX 发行版）
-  ipcMain.handle('export-pdf', async (_e: any, title: string, content: string) => {
+  ipcMain.handle('export-pdf', async (_e: any, title: string, rawContent: string) => {
+    const content = resolveAttachmentTokens(rawContent);
     const { dialog } = require('electron');
     const win = BrowserWindow.getFocusedWindow();
     if (!win) return { success: false, error: 'no window' };
@@ -802,17 +1124,17 @@ function setupIPC(): void {
           : content;
       const finalFormat = isLatex || /\\begin\{(equation|align|gather|eqnarray)\*?\}/.test(content) ? 'latex' : inputFormat;
       fs.writeFileSync(tmpInput, source, 'utf-8');
-      await new Promise<void>((resolve, reject) => {
-        execFile(pandocPath, [
-          tmpInput, '-f', finalFormat, '-t', 'pdf',
-          '--pdf-engine=xelatex',
-          '-V', 'CJKmainfont=Microsoft YaHei',
-          '-V', 'geometry:margin=2.5cm',
-          '-o', tmpOutput,
-        ], (err) => {
-          if (err) reject(err); else resolve();
-        });
-      });
+      let lastError: Error | null = null;
+      for (const font of PDF_CJK_FONT_CANDIDATES) {
+        try {
+          await runPandoc([tmpInput, '-f', finalFormat, '-t', 'pdf', '--pdf-engine=xelatex', '-V', `CJKmainfont=${font}`, '-V', 'geometry:margin=2.5cm', '-o', tmpOutput]);
+          lastError = null;
+          break;
+        } catch (err: any) {
+          lastError = err;
+        }
+      }
+      if (lastError) throw new Error(`PDF 编译失败，未能使用常见中文字体完成排版（已尝试 ${PDF_CJK_FONT_CANDIDATES.join(' / ')}）：${lastError.message}`);
       fs.copyFileSync(tmpOutput, result.filePath);
       return { success: true, path: result.filePath };
     } catch (err: any) {
@@ -822,18 +1144,15 @@ function setupIPC(): void {
       try { fs.unlinkSync(tmpOutput); } catch {}
     }
   });
-  ipcMain.handle('pandoc-compile', async (_e: any, source: string, fromFormat: string = 'latex') => {
+  ipcMain.handle('pandoc-compile', async (_e: any, rawSource: string, fromFormat: string = 'latex') => {
+    const source = resolveAttachmentTokens(rawSource);
     const tmpDir = os.tmpdir();
     const ext = fromFormat === 'latex' ? '.tex' : fromFormat === 'rst' ? '.rst' : fromFormat === 'html' ? '.html' : '.md';
     const tmpInput = path.join(tmpDir, `muyujian_${Date.now()}${ext}`);
     const tmpOutput = path.join(tmpDir, `muyujian_${Date.now()}.html`);
     try {
       fs.writeFileSync(tmpInput, source, 'utf-8');
-      await new Promise<void>((resolve, reject) => {
-        execFile(pandocPath, [tmpInput, '-f', fromFormat, '-t', 'html5', '--mathjax', '-o', tmpOutput], (err) => {
-          if (err) reject(err); else resolve();
-        });
-      });
+      await runPandoc([tmpInput, '-f', fromFormat, '-t', 'html5', '--mathjax', '-o', tmpOutput]);
       let html = fs.readFileSync(tmpOutput, 'utf-8');
       html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
       return { success: true, html };
@@ -849,15 +1168,15 @@ function setupIPC(): void {
   const timerRecordsPath = () => path.join(workspaceStorage.getRoot(), 'task-timer-records.json');
 
   ipcMain.handle('save-timer-record', (_e: any, record: any) => {
-    try {
-      let data: any = { records: [] };
-      try { const file = timerRecordsPath(); if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
-      if (!data.records) data.records = [];
+    if (!record || typeof record !== 'object') return { success: false, error: '记录无效' };
+    return enqueueFile(timerRecordsPath(), () => {
+      const data: any = (readJsonValue(timerRecordsPath(), { records: [] }) as any) || { records: [] };
+      if (!Array.isArray(data.records)) data.records = [];
       data.records.push(record);
       if (data.records.length > 1000) data.records = data.records.slice(-1000);
-      fs.writeFileSync(timerRecordsPath(), JSON.stringify(data, null, 2), 'utf-8');
+      writeAtomic(timerRecordsPath(), JSON.stringify(data, null, 2));
       return { success: true };
-    } catch (err: any) { return { success: false, error: err.message }; }
+    });
   });
 
   ipcMain.handle('get-timer-records', () => {
@@ -866,13 +1185,12 @@ function setupIPC(): void {
   });
 
   ipcMain.handle('save-active-session', (_e: any, session: any) => {
-    try {
-      let data: any = { records: [] };
-      try { const file = timerRecordsPath(); if (fs.existsSync(file)) data = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch {}
+    return enqueueFile(timerRecordsPath(), () => {
+      const data: any = (readJsonValue(timerRecordsPath(), { records: [] }) as any) || { records: [] };
       data.activeSession = session || undefined;
-      fs.writeFileSync(timerRecordsPath(), JSON.stringify(data, null, 2), 'utf-8');
+      writeAtomic(timerRecordsPath(), JSON.stringify(data, null, 2));
       return { success: true };
-    } catch (err: any) { return { success: false, error: err.message }; }
+    });
   });
 
   ipcMain.handle('load-active-session', () => {
@@ -885,6 +1203,58 @@ function setupIPC(): void {
     } catch {}
     return null;
   });
+
+  // ---- Agent Bridge（对外接入 Agent 的本地桥服务）----
+  const getBridgeOptions = (): BridgeOptions => {
+    const saved = store.get('agentBridge');
+    return {
+      enabled: Boolean(saved?.enabled),
+      bind: saved?.bind === 'lan' ? 'lan' : 'loopback',
+      token: saved?.token || '',
+    };
+  };
+  const applyBridge = async (): Promise<BridgeOptions & { status: ReturnType<AgentBridge['status']> }> => {
+    const options = getBridgeOptions();
+    if (options.enabled && !options.token) {
+      // 首次开启时生成 token
+      store.set('agentBridge.token', generateBridgeToken());
+      return applyBridge();
+    }
+    if (options.enabled) {
+      if (!agentBridge) agentBridge = new AgentBridge(options, { workspaceRoot: () => workspaceStorage.getRoot() });
+      agentBridge.updateOptions(options);
+      await agentBridge.start();
+    } else if (agentBridge) {
+      await agentBridge.stop();
+    }
+    return { ...options, token: options.token, status: agentBridge ? agentBridge.status() : { running: false, host: '', port: 0, url: '', allowedIpsNote: '' } };
+  };
+
+  ipcMain.handle('agent-bridge-get', async () => {
+    const options = getBridgeOptions();
+    return { ...options, status: agentBridge ? agentBridge.status() : null, audit: agentBridge ? agentBridge.auditTrail().slice(-10) : [] };
+  });
+  ipcMain.handle('agent-bridge-save', async (_e: any, value: unknown) => {
+    try {
+      const input = (value && typeof value === 'object' ? value : {}) as { enabled?: unknown; bind?: unknown };
+      const current = store.get('agentBridge') || { enabled: false, bind: 'loopback' as const, token: generateBridgeToken() };
+      const next = {
+        enabled: Boolean(input.enabled),
+        bind: input.bind === 'lan' ? 'lan' as const : 'loopback' as const,
+        token: current.token || generateBridgeToken(),
+      };
+      store.set('agentBridge', next);
+      const applied = await applyBridge();
+      return { success: true, ...applied };
+    } catch (error: any) { return { success: false, error: error?.message || 'Agent Bridge 启动失败' }; }
+  });
+  ipcMain.handle('agent-bridge-reset-token', async () => {
+    store.set('agentBridge.token', generateBridgeToken());
+    return { success: true, token: store.get('agentBridge')?.token };
+  });
+  ipcMain.handle('agent-bridge-token', () => store.get('agentBridge')?.token || '');
+  // 若上次开启了桥服务，启动时自动拉起
+  void applyBridge();
 }
 
 function createMenu(): void {
@@ -906,7 +1276,9 @@ function createMenu(): void {
       { role: 'cut' as const, label: '剪切' }, { role: 'copy' as const, label: '复制' }, { role: 'paste' as const, label: '粘贴' }, { role: 'selectAll' as const, label: '全选' },
     ]},
     { label: '视图', submenu: [
-      { role: 'reload' as const, label: '重新加载' }, { role: 'forceReload' as const, label: '强制重新加载' }, { role: 'toggleDevTools' as const, label: '开发者工具' }, sep,
+      ...(app.isPackaged ? [] : [
+        { role: 'reload' as const, label: '重新加载' }, { role: 'forceReload' as const, label: '强制重新加载' }, { role: 'toggleDevTools' as const, label: '开发者工具' }, sep,
+      ]),
       { role: 'resetZoom' as const, label: '重置缩放' }, { role: 'zoomIn' as const, label: '放大' }, { role: 'zoomOut' as const, label: '缩小' }, sep,
       { role: 'togglefullscreen' as const, label: '全屏' },
     ]},
@@ -920,6 +1292,7 @@ function createMenu(): void {
 app.whenReady().then(() => {
   workspaceStorage = new WorkspaceStorage(dataDir);
   dataDir = workspaceStorage.getRoot();
+  knowledgeService = new KnowledgeService(() => workspaceStorage.getRoot());
   createMenu();
   createInitialNotes();
   setupIPC();
@@ -928,3 +1301,4 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { void agentBridge?.stop(); void internalAgentBridge?.stop(); void dshRuntime.close(); void dshWebGui.stop(); });

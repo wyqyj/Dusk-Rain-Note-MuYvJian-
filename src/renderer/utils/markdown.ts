@@ -19,6 +19,12 @@ import latex_lang from 'highlight.js/lib/languages/latex';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { sanitizeHtml } from './sanitizeHtml';
+import { resolveAttachmentTokens } from './attachmentRef';
+
+/** KaTeX 渲染失败的回退分支必须先转义，不能依赖后道 sanitize 兜底。 */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('typescript', typescript);
@@ -49,14 +55,14 @@ function preRenderMath(text: string): { text: string; hasMath: boolean } {
   result = result.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
     hasMath = true;
     try { return `<div class="katex-block">${katex.renderToString(math.trim(), { throwOnError: false, displayMode: true })}</div>`; }
-    catch { return `<div class="katex-error">${math}</div>`; }
+    catch { return `<div class="katex-error">${escapeHtml(math)}</div>`; }
   });
 
   // 2. 块级公式 \[...\] → KaTeX HTML
   result = result.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     hasMath = true;
     try { return `<div class="katex-block">${katex.renderToString(math.trim(), { throwOnError: false, displayMode: true })}</div>`; }
-    catch { return `<div class="katex-error">${math}</div>`; }
+    catch { return `<div class="katex-error">${escapeHtml(math)}</div>`; }
   });
 
   // 3. 数学环境 equation/align/gather → KaTeX HTML
@@ -69,7 +75,7 @@ function preRenderMath(text: string): { text: string; hasMath: boolean } {
         ? `\\begin{aligned}${math.trim()}\\end{aligned}`
         : math.trim();
       try { return `<div class="katex-block">${katex.renderToString(content, { throwOnError: false, displayMode: true })}</div>`; }
-      catch { return `<div class="katex-error">${math}</div>`; }
+      catch { return `<div class="katex-error">${escapeHtml(math)}</div>`; }
     });
   }
 
@@ -80,7 +86,7 @@ function preRenderMath(text: string): { text: string; hasMath: boolean } {
   result = result.replace(/\\\((.+?)\\\)/g, (_, math) => {
     hasMath = true;
     try { return katex.renderToString(math, { throwOnError: false, displayMode: false }); }
-    catch { return `<span class="katex-error">${math}</span>`; }
+    catch { return `<span class="katex-error">${escapeHtml(math)}</span>`; }
   });
 
   return { text: result, hasMath };
@@ -98,6 +104,12 @@ function renderInlineMath(text: string): string {
         i += 2;
         continue;
       }
+      // pandoc 规则：开 $ 后紧跟空白时按普通文本处理（如 "价格 $5 到 $10"）
+      if (i + 1 >= text.length || /\s/.test(text[i + 1]!)) {
+        result += text[i];
+        i++;
+        continue;
+      }
       // 查找匹配的闭合 $
       let j = i + 1;
       let depth = 0;
@@ -107,12 +119,14 @@ function renderInlineMath(text: string): string {
         else if (text[j] === '$' && depth === 0) break;
         j++;
       }
-      if (j < text.length) {
+      // 闭合 $ 前不能是空白、后不能是数字（避免吞掉货币区间）
+      const closesCleanly = j < text.length && !/\s/.test(text[j - 1] || '') && !/[0-9]/.test(text[j + 1] || '');
+      if (closesCleanly) {
         const mathContent = text.slice(i + 1, j);
         try {
           result += katex.renderToString(mathContent, { throwOnError: false, displayMode: false });
         } catch {
-          result += `<span class="katex-error">${mathContent}</span>`;
+          result += `<span class="katex-error">${escapeHtml(mathContent)}</span>`;
         }
         i = j + 1;
       } else {
@@ -358,6 +372,8 @@ function latexPlugin(md: MarkdownIt): void {
     // 跳过 $$（已由 math_display 处理）
     if (state.src.charCodeAt(state.pos + 1) === 0x24) return false;
     const start = state.pos + 1;
+    // 开 $ 后紧跟空白不是公式（pandoc 规则，避免货币文本被误吞）
+    if (start >= state.posMax || /\s/.test(state.src[start]!)) return false;
     let end = start;
     let depth = 0;
     while (end < state.posMax) {
@@ -367,6 +383,9 @@ function latexPlugin(md: MarkdownIt): void {
       end++;
     }
     if (end >= state.posMax || end === start) return false;
+    // 闭合 $ 前不能是空白、后不能是数字
+    if (/\s/.test(state.src[end - 1] || '')) return false;
+    if (end + 1 < state.posMax && /[0-9]/.test(state.src[end + 1]!)) return false;
     if (!silent) {
       const token = state.push('math_inline', 'math', 0);
       token.content = state.src.slice(start, end);
@@ -400,12 +419,12 @@ function latexPlugin(md: MarkdownIt): void {
   md.renderer.rules.math_inline = (tokens, idx) => {
     const content = tokens[idx]?.content || '';
     try { return katex.renderToString(content, { throwOnError: false, displayMode: false }); }
-    catch { return `<span class="katex-error">${content}</span>`; }
+    catch { return `<span class="katex-error">${escapeHtml(content)}</span>`; }
   };
   md.renderer.rules.math_block = (tokens, idx) => {
     const content = tokens[idx]?.content || '';
     try { return `<div class="katex-block">${katex.renderToString(content, { throwOnError: false, displayMode: true })}</div>`; }
-    catch { return `<div class="katex-error">${content}</div>`; }
+    catch { return `<div class="katex-error">${escapeHtml(content)}</div>`; }
   };
 }
 
@@ -433,8 +452,9 @@ export function normalizeMathMarkdown(text: string): string {
     return `$${expression.replace(/->/g, '\\to')}$`;
   });
   return codeNormalized
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$\n${math.trim()}\n$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`);
+    // 不允许跨空行且限长，避免未闭合定界符时吞掉整篇文档或触发回溯灾难
+    .replace(/\\\[((?:(?!\n\s*\n)[\s\S]){1,10000}?)\\\]/g, (_, math) => `$$\n${math.trim()}\n$$`)
+    .replace(/\\\(([^\n]{1,2000}?)\\\)/g, (_, math) => `$${math.trim()}$`);
 }
 
 export function renderMarkdown(text: string): string {
@@ -442,9 +462,9 @@ export function renderMarkdown(text: string): string {
   if (isLatexDocument(normalized)) {
     const { text: mathRendered } = preRenderMath(normalized);
     const structured = preprocessLatexStructure(mathRendered);
-    return sanitizeHtml(md.render(preprocessWikiLinks(structured)));
+    return resolveAttachmentTokens(sanitizeHtml(md.render(preprocessWikiLinks(structured))));
   }
-  return sanitizeHtml(md.render(preprocessWikiLinks(normalized)));
+  return resolveAttachmentTokens(sanitizeHtml(md.render(preprocessWikiLinks(normalized))));
 }
 
 export function toggleTaskCheckbox(source: string, lineIndex: number, checked: boolean): string {
@@ -527,11 +547,11 @@ export function formatDeadlineDate(timestamp: number): string {
 export function postProcessPandocHtml(html: string): string {
   html = html.replace(/\\\((.+?)\\\)/g, (_, math) => {
     try { return katex.renderToString(math, { throwOnError: false, displayMode: false }); }
-    catch { return `<span class="katex-error">${math}</span>`; }
+    catch { return `<span class="katex-error">${escapeHtml(math)}</span>`; }
   });
   html = html.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
     try { return `<div class="katex-block">${katex.renderToString(math.trim(), { throwOnError: false, displayMode: true })}</div>`; }
-    catch { return `<div class="katex-error">${math}</div>`; }
+    catch { return `<div class="katex-error">${escapeHtml(math)}</div>`; }
   });
-  return sanitizeHtml(html);
+  return resolveAttachmentTokens(sanitizeHtml(html));
 }

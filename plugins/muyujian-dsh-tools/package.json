@@ -1,0 +1,8 @@
+{
+  "name": "muyujian-dsh-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MuYuJian capability tools for the embedded DeepSeek Harness runtime",
+  "main": "index.js",
+  "keywords": ["dsh-plugin"]
+}

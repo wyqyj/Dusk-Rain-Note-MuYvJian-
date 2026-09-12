@@ -15,3 +15,6 @@ data/
 .DS_Store
 Thumbs.db
 resources/pandoc/
+resources/dsh-runtime/
+resources/node/
+_ref/

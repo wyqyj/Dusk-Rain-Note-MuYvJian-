@@ -1,14 +1,5 @@
 import React, { useRef } from 'react';
-import { Attachment, useAttachmentStore } from '../store/attachmentStore';
-
-function readFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+import { Attachment, attachmentDisplayUrl, useAttachmentStore } from '../store/attachmentStore';
 
 export const AttachmentLibrary: React.FC<{ onClose: () => void; onSelect?: (attachment: Attachment) => void }> = ({ onClose, onSelect }) => {
   const { attachments, addAttachment, removeAttachment } = useAttachmentStore();
@@ -18,7 +9,7 @@ export const AttachmentLibrary: React.FC<{ onClose: () => void; onSelect?: (atta
     if (!files) return;
     for (const file of Array.from(files)) {
       if (file.size > 8 * 1024 * 1024) continue;
-      addAttachment(file, await readFile(file));
+      await addAttachment(file);
     }
   };
 
@@ -36,7 +27,7 @@ export const AttachmentLibrary: React.FC<{ onClose: () => void; onSelect?: (atta
         {attachments.length ? <div className="attachment-grid">
           {attachments.map((attachment) => <div className="attachment-tile" key={attachment.id}>
             <button className="attachment-image" onClick={() => onSelect?.(attachment)} title={onSelect ? '放入画布' : attachment.name}>
-              <img src={attachment.dataUrl} alt={attachment.name} />
+              <img src={attachmentDisplayUrl(attachment)} alt={attachment.name} />
             </button>
             <div className="attachment-meta"><span title={attachment.name}>{attachment.name}</span><button onClick={() => removeAttachment(attachment.id)} title="移除素材" aria-label="移除素材">×</button></div>
           </div>)}

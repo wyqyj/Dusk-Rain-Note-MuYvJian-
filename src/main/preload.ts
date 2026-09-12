@@ -28,9 +28,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getOpacity: () => ipcRenderer.invoke('get-opacity'),
   // 便签数据
   getNotes: () => ipcRenderer.invoke('get-notes'),
-  saveNotes: (notes: string) => ipcRenderer.invoke('save-notes', notes),
+  saveNotes: (notes: string, knownAfter?: number) => ipcRenderer.invoke('save-notes', notes, knownAfter),
   getAttachments: () => ipcRenderer.invoke('get-attachments'),
   saveAttachments: (attachments: string) => ipcRenderer.invoke('save-attachments', attachments),
+  writeAttachmentFile: (name: string, dataUrl: string) => ipcRenderer.invoke('attachment-write-file', name, dataUrl),
   createQuickNote: (noteJson: string) => ipcRenderer.invoke('create-quick-note', noteJson),
   updateQuickNoteContent: (noteId: string, content: string) => ipcRenderer.invoke('update-quick-note-content', noteId, content),
   updateQuickNote: (noteId: string, updates: string) => ipcRenderer.invoke('update-quick-note', noteId, updates),
@@ -87,11 +88,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAiConfig: () => ipcRenderer.invoke('ai-get-config'),
   saveAiConfig: (config: { baseUrl: string; model: string; apiKey?: string; clearApiKey?: boolean }) => ipcRenderer.invoke('ai-save-config', config),
   testAiConnection: () => ipcRenderer.invoke('ai-test-connection'),
-  startAi: (request: { action: 'summarize' | 'outline' | 'review-cards' | 'rewrite'; content: string }) => ipcRenderer.invoke('ai-start', request),
+  startAi: (request: { action: 'summarize' | 'outline' | 'review-cards' | 'rewrite' | 'chat'; content: string; knowledgeSourceIds?: string[]; knowledgeBundleIds?: string[] }) => ipcRenderer.invoke('ai-start', request),
   cancelAi: (requestId: string) => ipcRenderer.invoke('ai-cancel', requestId),
+  // 知识库能力
+  knowledgeGetSources: () => ipcRenderer.invoke('knowledge-get-sources'),
+  knowledgeSearch: (query: string, options?: { sourceIds?: string[]; bundleIds?: string[]; limit?: number }) => ipcRenderer.invoke('knowledge-search', query, options),
+  knowledgeListBundles: () => ipcRenderer.invoke('knowledge-bundles-list'),
+  knowledgeSaveBundle: (bundle: { id?: string; name: string; description?: string; sourceIds: string[] }) => ipcRenderer.invoke('knowledge-bundles-save', bundle),
+  knowledgeDeleteBundle: (id: string) => ipcRenderer.invoke('knowledge-bundles-delete', id),
+  // 内置 Agent（DeepSeek Harness 子进程）
+  dshAgentRun: (request: { text: string; sessionId?: string }) => ipcRenderer.invoke('dsh-agent-run', request),
+  dshAgentStop: () => ipcRenderer.invoke('dsh-agent-stop'),
+  dshAgentStatus: () => ipcRenderer.invoke('dsh-agent-status'),
+  dshAgentConfirmResolve: (request: { id: string; approved: boolean }) => ipcRenderer.invoke('dsh-agent-confirm-resolve', request),
+  dshWebStart: (preset?: string) => ipcRenderer.invoke('dsh-web-start', preset),
+  dshWebRestart: (preset?: string) => ipcRenderer.invoke('dsh-web-restart', preset),
+  dshWebStop: () => ipcRenderer.invoke('dsh-web-stop'),
+  dshWebStatus: () => ipcRenderer.invoke('dsh-web-status'),
+  onDshAgentConfirmRequest: (callback: (request: { id: string; capability: string; description: string; params: Record<string, unknown> }) => void) => {
+    const listener = (_event: unknown, request: { id: string; capability: string; description: string; params: Record<string, unknown> }) => callback(request);
+    ipcRenderer.on('dsh-agent-confirm-request', listener);
+    return () => ipcRenderer.removeListener('dsh-agent-confirm-request', listener);
+  },
+  onDshAgentEvent: (callback: (notification: unknown) => void) => {
+    const listener = (_event: unknown, notification: unknown) => callback(notification);
+    ipcRenderer.on('dsh-agent-event', listener);
+    return () => ipcRenderer.removeListener('dsh-agent-event', listener);
+  },
   onAiStream: (callback: (event: { requestId: string; delta?: string; done?: boolean; error?: string }) => void) => {
     const listener = (_event: unknown, value: { requestId: string; delta?: string; done?: boolean; error?: string }) => callback(value);
     ipcRenderer.on('ai-stream', listener);
     return () => ipcRenderer.removeListener('ai-stream', listener);
   },
+  // Agent 本地桥（对外接入 Codex 等 Agent 工具）
+  getAgentBridge: () => ipcRenderer.invoke('agent-bridge-get'),
+  saveAgentBridge: (config: { enabled: boolean; bind: 'loopback' | 'lan' }) => ipcRenderer.invoke('agent-bridge-save', config),
+  resetAgentBridgeToken: () => ipcRenderer.invoke('agent-bridge-reset-token'),
 });

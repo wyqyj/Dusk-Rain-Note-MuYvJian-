@@ -8,20 +8,11 @@ import { languages } from '@codemirror/language-data';
 import { useNoteStore } from '../store/noteStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useAutoSave } from '../utils/useAutoSave';
+import { saveImageToAttachments } from '../utils/attachmentRef';
 import { VersionHistory } from './VersionHistory';
 
 type AiAction = 'summarize' | 'outline' | 'review-cards' | 'rewrite';
 const aiActionLabels: Record<AiAction, string> = { summarize: '摘要', outline: '提纲', 'review-cards': '复习卡片', rewrite: '润色' };
-
-/** 将文件转为 base64 data URL */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 /** 在编辑器光标位置插入文本 */
 function insertAtCursor(view: EditorView, text: string) {
@@ -68,21 +59,21 @@ export const Editor: React.FC = () => {
     });
   }, []);
 
-  // 插入图片（base64）
+  // 插入图片（正文落盘到 attachments/，内容只保留 attachment: 令牌）
   const insertImage = useCallback(async (file: File) => {
     if (!viewRef.current) return;
-    const maxSize = 5 * 1024 * 1024; // 5MB 限制
+    const maxSize = 20 * 1024 * 1024;
     if (file.size > maxSize) {
-      alert('图片大小不能超过 5MB');
+      alert('图片大小不能超过 20MB');
       return;
     }
     try {
-      const dataUrl = await fileToBase64(file);
+      const location = await saveImageToAttachments(file);
       const name = file.name.replace(/\.[^.]+$/, '');
-      const markdown = `![${name}](${dataUrl})`;
+      const markdown = `![${name}](${location})`;
       insertAtCursor(viewRef.current, markdown);
     } catch {
-      alert('图片读取失败');
+      alert('图片保存失败');
     }
   }, []);
 

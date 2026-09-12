@@ -3,9 +3,10 @@ import { AttachmentLibrary } from './AttachmentLibrary';
 import { Editor } from './Editor';
 import { Preview } from './Preview';
 import { VersionHistory } from './VersionHistory';
-import { useAttachmentStore } from '../store/attachmentStore';
+import { attachmentDisplayUrl, useAttachmentStore } from '../store/attachmentStore';
 import { CanvasItem, CanvasLink, Note, useNoteStore } from '../store/noteStore';
 import { generateId, renderMarkdown } from '../utils/markdown';
+import { ATTACHMENT_TOKEN_PREFIX, attachmentTokenToUrl, isAttachmentToken } from '../utils/attachmentRef';
 import { isCanvasBackgroundWheelTarget } from '../utils/canvasWheel';
 
 type Camera = { x: number; y: number; scale: number };
@@ -33,14 +34,6 @@ function getVisibleItems(items: CanvasItem[], camera: Camera, viewport: { width:
   });
 }
 
-function imageToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 const templates: Record<string, { label: string; items: Omit<CanvasItem, 'id'>[] }> = {
   blank: { label: '空白画布', items: [] },
@@ -163,8 +156,11 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
   const addImage = useCallback(async (file: File, position?: { x: number; y: number }) => {
     if (!file.type.startsWith('image/')) return;
     if (file.size > 8 * 1024 * 1024) { setMessage('图片不能超过 8MB'); return; }
-    try { const dataUrl = await imageToDataUrl(file); const attachment = addAttachment(file, dataUrl); addImageData(dataUrl, attachment.id, position); }
-    catch { setMessage('图片读取失败'); }
+    try {
+      const attachment = await addAttachment(file);
+      const src = attachment.fileName ? ATTACHMENT_TOKEN_PREFIX + attachment.fileName : (attachment.dataUrl || '');
+      addImageData(src, attachment.id, position);
+    } catch { setMessage('图片读取失败'); }
   }, [addAttachment, addImageData]);
   const addNoteCard = useCallback((noteId: string, position?: { x: number; y: number }) => {
     const source = notes.find((entry) => entry.id === noteId);
@@ -386,7 +382,8 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
           <svg className="canvas-links" aria-hidden="true">{links.map((link) => { const from = positions.get(link.fromId); const to = positions.get(link.toId); return from && to ? <line key={link.id} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={link.color || '#818cf8'} strokeWidth="2" /> : null; })}</svg>
           {visibleItems.map((item) => {
             const linkedNote = item.type === 'note' ? notes.find((entry) => entry.id === item.content) : undefined;
-            const imageSource = item.attachmentId ? attachments.find((attachment) => attachment.id === item.attachmentId)?.dataUrl || item.content : item.content;
+            const contentSource = isAttachmentToken(item.content) ? attachmentTokenToUrl(item.content) : item.content;
+            const imageSource = item.attachmentId ? attachmentDisplayUrl(attachments.find((attachment) => attachment.id === item.attachmentId)) || contentSource : contentSource;
             return <div key={item.id} data-canvas-item className={`canvas-item ${item.type} ${selectedId === item.id ? 'selected' : ''} ${connectorFrom === item.id ? 'link-source' : ''}`} style={{ transform: `translate(${item.x}px, ${item.y}px)`, width: item.width, height: itemHeight(item) }} onPointerDown={(event) => handleItemPointerDown(event, item)} onContextMenu={(event) => handleContextMenu(event, item)}>
               {item.type === 'image' ? <CanvasImage src={imageSource} /> : item.type === 'note' ? <button className="canvas-note-card" onClick={(event) => { event.stopPropagation(); if (linkedNote) openNoteInspector(item, linkedNote); }}><span>{linkedNote?.noteType === 'todo' ? '待办' : '笔记'}</span><strong>{linkedNote?.title || '已删除的笔记'}</strong><p>{linkedNote?.content.replace(/[#*\[\]`~>_-]/g, '').replace(/\n+/g, ' ').trim().slice(0, 72) || '点击在右侧打开笔记'}</p></button> : editingTextId === item.id ? <textarea autoFocus value={item.content} onPointerDown={(event) => event.stopPropagation()} onBlur={() => setEditingTextId(null)} onChange={(event) => updateItem(item.id, { content: event.target.value })} style={{ color: item.color || '#1e293b' }} aria-label="编辑画布文本" /> : <div className="canvas-text-preview" style={{ color: item.color || '#1e293b' }} onDoubleClick={(event) => { event.stopPropagation(); setEditingTextId(item.id); }} dangerouslySetInnerHTML={{ __html: renderMarkdown(item.content) }} />}
               {selectedId === item.id && <><div className="canvas-item-handle" onPointerDown={(event) => event.stopPropagation()}><button onClick={() => resizeSelected('width', -24)} title="缩窄">←</button><button onClick={() => resizeSelected('width', 24)} title="加宽">→</button><button onClick={() => resizeSelected('height', -20)} title="降低">↓</button><button onClick={() => resizeSelected('height', 20)} title="增高">↑</button><button onClick={() => focusItem(item)} title="居中适配">◎</button>{item.type === 'note' && linkedNote && <button onClick={() => openNoteInspector(item, linkedNote)} title="打开关联笔记">□</button>}</div><button className="canvas-resize-handle" onPointerDown={(event) => handleResizePointerDown(event, item)} aria-label="拖拽调整元素宽高" title="拖拽调整大小" /></>}
@@ -400,7 +397,7 @@ export const CanvasBoard: React.FC<{ note: Note }> = ({ note }) => {
     </div>
     {selected && <div className="canvas-size-panel"><span>尺寸</span><label>宽 <input type="number" min="120" max="900" value={selected.width} onChange={(event) => setSelectedSize('width', Number(event.target.value))} /></label><label>高 <input type="number" min={minimumItemHeight(selected)} max="720" value={itemHeight(selected)} onChange={(event) => setSelectedSize('height', Number(event.target.value))} /></label><button onClick={() => focusItem(selected)}>聚焦</button></div>}
     <input ref={fileInputRef} className="hidden" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void addImage(file); event.target.value = ''; }} />
-    {showLibrary && <AttachmentLibrary onClose={() => setShowLibrary(false)} onSelect={(attachment) => { addImageData(attachment.dataUrl, attachment.id); setShowLibrary(false); }} />}
+    {showLibrary && <AttachmentLibrary onClose={() => setShowLibrary(false)} onSelect={(attachment) => { addImageData(attachment.fileName ? ATTACHMENT_TOKEN_PREFIX + attachment.fileName : (attachment.dataUrl || ''), attachment.id); setShowLibrary(false); }} />}
     {showHistory && <VersionHistory note={note} onClose={() => setShowHistory(false)} />}
   </div>;
 };

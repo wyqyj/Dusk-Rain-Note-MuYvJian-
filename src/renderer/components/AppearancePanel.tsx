@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import { useSettingsStore } from '../store/settingsStore';
-import { AiConfigPanel } from './AiConfigPanel';
 
 export const AppearancePanel: React.FC<{ onClose: () => void; previewVisible: boolean; onTogglePreview: () => void }> = ({ onClose, previewVisible, onTogglePreview }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,7 +29,7 @@ export const AppearancePanel: React.FC<{ onClose: () => void; previewVisible: bo
     }
   };
   return <div className="overlay-panel" role="dialog" aria-modal="true"><div className="version-panel appearance-panel"><div className="overlay-header"><div><h2>AI 设置、外观与预览</h2><p>配置 AI 接口、管理壁纸和预览；数据仅保存在本机</p></div><button className="icon-mini" onClick={onClose} title="关闭" aria-label="关闭">×</button></div>
-    <div className="appearance-content"><section><div><strong>自定义壁纸</strong><p>{settings.wallpaper ? '已应用一张本地壁纸' : '上传图片作为工作区背景'}</p></div><div className="appearance-buttons"><button className="primary-mini" onClick={() => inputRef.current?.click()}>上传壁纸</button>{settings.wallpaper && <button className="secondary-mini" onClick={() => updateSettings({ wallpaper: undefined })}>清除</button>}</div></section><section><div><strong>实时预览</strong><p>可在编辑时手动关闭渲染窗格</p></div><button className="secondary-mini" onClick={onTogglePreview}>{previewVisible ? '关闭预览' : '显示预览'}</button></section><AiConfigPanel /><section className="appearance-reset"><div><strong>初始化全部数据</strong><p>删除便签、附件、学习工作台数据和工作台内备份，保留数据目录位置。</p></div><button className="secondary-mini danger-action" disabled={resetting} onClick={resetWorkspace}>{resetting ? '正在初始化…' : '初始化'}</button></section></div>
+    <div className="appearance-content"><section><div><strong>自定义壁纸</strong><p>{settings.wallpaper ? '已应用一张本地壁纸' : '上传图片作为工作区背景'}</p></div><div className="appearance-buttons"><button className="primary-mini" onClick={() => inputRef.current?.click()}>上传壁纸</button>{settings.wallpaper && <button className="secondary-mini" onClick={() => updateSettings({ wallpaper: undefined })}>清除</button>}</div></section><section><div><strong>实时预览</strong><p>可在编辑时手动关闭渲染窗格</p></div><button className="secondary-mini" onClick={onTogglePreview}>{previewVisible ? '关闭预览' : '显示预览'}</button></section><section className="appearance-reset"><div><strong>初始化全部数据</strong><p>删除便签、附件、学习工作台数据和工作台内备份，保留数据目录位置。</p></div><button className="secondary-mini danger-action" disabled={resetting} onClick={resetWorkspace}>{resetting ? '正在初始化…' : '初始化'}</button></section></div>
     <input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={(event) => { upload(event.target.files?.[0]); event.target.value = ''; }} />
   </div></div>;
 };

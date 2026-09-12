@@ -4,6 +4,10 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    // vite root 是 src/renderer，相对 root 把主进程测试也纳入范围
+    include: ['**/*.test.ts', '../main/**/*.test.ts'],
+  },
   root: 'src/renderer',
   base: './',
   build: {

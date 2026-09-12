@@ -15,6 +15,7 @@ import { useAttachmentStore } from './store/attachmentStore';
 import { useUIStore } from './store/uiStore';
 import { useSettingsStore } from './store/settingsStore';
 import { generateId } from './utils/markdown';
+import { setAttachmentRoot } from './utils/attachmentRef';
 
 const App: React.FC = () => {
   const { activeNoteId, notes, loaded: notesLoaded, loadNotes, addNote, selectNote } = useNoteStore();
@@ -31,8 +32,11 @@ const App: React.FC = () => {
   const activeNote = notes.find((note) => note.id === activeNoteId);
   const isCanvas = activeNote?.noteType === 'canvas';
 
-  // 启动时加载便签数据并注册跨窗口重载监听
-  useEffect(() => { void loadNotes(); void loadAttachments(); registerReloadListener(); }, []);
+  // 启动时加载便签数据、注册跨窗口重载监听，并缓存附件根路径供图片令牌解析
+  useEffect(() => {
+    void loadNotes(); void loadAttachments(); registerReloadListener();
+    void window.electronAPI?.getDataPath().then((root) => { if (typeof root === 'string' && root) setAttachmentRoot(root); });
+  }, []);
 
   useEffect(() => {
     if (!notesLoaded) return;

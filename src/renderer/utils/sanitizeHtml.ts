@@ -17,7 +17,7 @@ const BLOCKED_TAGS = new Set(['base', 'embed', 'form', 'iframe', 'link', 'meta',
 function isSafeUrl(value: string, attribute: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (normalized.startsWith('javascript:') || normalized.startsWith('vbscript:') || normalized.startsWith('data:text/html')) return false;
-  if (attribute === 'src') return normalized.startsWith('https://') || normalized.startsWith('http://') || normalized.startsWith('data:image/') || normalized.startsWith('file:') || normalized.startsWith('blob:');
+  if (attribute === 'src') return normalized.startsWith('https://') || normalized.startsWith('http://') || normalized.startsWith('data:image/') || normalized.startsWith('file:') || normalized.startsWith('blob:') || normalized.startsWith('attachment:');
   if (attribute === 'href') return normalized.startsWith('#') || normalized.startsWith('https://') || normalized.startsWith('http://') || normalized.startsWith('mailto:') || normalized.startsWith('tel:') || normalized.startsWith('file:');
   return true;
 }

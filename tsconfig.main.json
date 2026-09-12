@@ -12,5 +12,6 @@
     "rootDir": "src/main",
     "declaration": false
   },
-  "include": ["src/main/**/*"]
+  "include": ["src/main/**/*"],
+  "exclude": ["src/main/**/*.test.ts"]
 }

@@ -28,6 +28,8 @@ interface NoteStore {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSavedJson = '';
+// 本窗口内存状态与磁盘一致的最近时刻：合并保存时，磁盘上更晚创建的便签会被保留
+let lastLoadedAt = 0;
 let reloading = false;
 const historyTimestamps = new Map<string, number>();
 
@@ -57,7 +59,7 @@ function saveToDisk(notes: Note[]): void {
     if (json === lastSavedJson) return;
     lastSavedJson = json;
     if (window.electronAPI) {
-      void window.electronAPI.saveNotes(json).catch(() => {
+      void window.electronAPI.saveNotes(json, lastLoadedAt).catch(() => {
         // Keep the in-memory state; a later edit will retry the write.
       });
     } else {
@@ -123,9 +125,11 @@ export const useNoteStore = create<NoteStore>((set, get) => ({
     });
     if (migrated) {
       lastSavedJson = JSON.stringify(notes, null, 2);
-      if (window.electronAPI) window.electronAPI.saveNotes(lastSavedJson);
+      lastLoadedAt = Date.now();
+      if (window.electronAPI) window.electronAPI.saveNotes(lastSavedJson, lastLoadedAt);
     } else {
       lastSavedJson = JSON.stringify(notes, null, 2);
+      lastLoadedAt = Date.now();
     }
     set({ notes, loaded: true });
   },
@@ -245,6 +249,7 @@ export function registerReloadListener(): void {
       const data = await window.electronAPI.getNotes();
       const notes = validateNotes(JSON.parse(data));
       lastSavedJson = JSON.stringify(notes, null, 2);
+      lastLoadedAt = Date.now();
       useNoteStore.setState({ notes });
     } catch {} finally {
       reloading = false;
