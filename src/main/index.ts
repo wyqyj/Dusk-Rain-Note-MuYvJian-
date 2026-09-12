@@ -787,12 +787,22 @@ ipcMain.handle('ai-start', (event: Electron.IpcMainInvokeEvent, value: unknown) 
     return { success: true };
   });
   ipcMain.handle('dsh-agent-status', () => ({ running: dshRuntime.isRunning() }));
-  ipcMain.handle('dsh-web-start', async () => {
+  ipcMain.handle('dsh-web-start', async (_e: unknown, preset: unknown) => {
     try {
-      const url = await dshWebGui.ensureUrl();
+      const target = preset === 'muyujian' || preset === 'research' ? preset : undefined;
+      const url = await dshWebGui.ensureUrl(target);
       return { success: true, url };
     } catch (error: any) {
       return { success: false, error: error?.message || 'dsh web 启动失败' };
+    }
+  });
+  ipcMain.handle('dsh-web-restart', async (_e: unknown, preset: unknown) => {
+    try {
+      const target = preset === 'muyujian' || preset === 'research' ? preset : undefined;
+      await dshWebGui.restart(target);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'dsh web 重启失败' };
     }
   });
   ipcMain.handle('dsh-web-stop', async () => { await dshWebGui.stop(); return { success: true }; });
