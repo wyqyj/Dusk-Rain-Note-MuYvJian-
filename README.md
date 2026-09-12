@@ -65,6 +65,21 @@
 - 可改动本地数据目录，目录迁移经过 SHA-256 校验；综合备份为单个 `.muyujian-workspace` 文件
 - 设置支持初始化全部数据，恢复功能、Markdown、公式和版本更新预置笔记，并清理工作台内备份；工作台根目录位置保持不变
 
+### AI 助手
+- 多会话历史 + 流式回复，接口设置收进右上角弹窗，Key 存系统安全存储不进配置文件
+- 知识库数据源抽屉：便签、题册、导入文件可勾选，检索 Top-5 片段自动注入问答上下文
+- 选择状态持久化，下次打开自动恢复
+
+### 内置 Agent
+- 学习工作台一级导航，整页嵌入 dsh Web GUI
+- 暮雨笺预设 / 研究预设分段切换
+- 业务工具（笔记、题册、计划、工作区状态、知识检索）经确认闸门执行写操作
+- 与 AI 助手共用同一网关/模型/Key 配置（`dshConfig` 单一事实源）
+
+### 对外接入 Agent
+- 本地 HTTP 桥服务：Bearer 令牌、512KB 上限、限流与审计日志
+- 零依赖 MCP 适配器 `bridge/muyujian-mcp.js`，能力表见 `bridge/README.md`
+
 ### 工作台文件案例
 
 每个工作台模块均有对应案例文件，索引见 [examples/workbench/README.md](examples/workbench/README.md)。
@@ -152,4 +167,4 @@ npx electron .
 
 ## 技术栈
 
-Electron + React + TypeScript + Tailwind CSS + CodeMirror 6 + KaTeX + Zustand + Pandoc + Recharts
+Electron + React + TypeScript + Tailwind CSS + CodeMirror 6 + KaTeX + Zustand + Pandoc + Recharts + FlexSearch
