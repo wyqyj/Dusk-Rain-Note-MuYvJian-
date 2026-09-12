@@ -163,6 +163,7 @@ export class DshRuntime {
             NO_PROXY: '127.0.0.1,localhost',
             no_proxy: '127.0.0.1,localhost',
             MUYUJIAN_TOOL_MANIFEST: manifestFile,
+            MUYUJIAN_DSH_TOOLS_PATH: resolveDshToolsDir(dshBin),
             ...(bridge ? { MUYUJIAN_BRIDGE_URL: bridge.url, MUYUJIAN_BRIDGE_TOKEN: bridge.token } : {}),
           },
         },
@@ -220,6 +221,15 @@ export function resolveDshRuntimePaths(): { nodeCommand: string; dshBin: string 
   const vendored = path.join(__dirname, '..', '..', 'resources', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
   if (fs.existsSync(vendored)) return { nodeCommand: 'node', dshBin: vendored };
   return { nodeCommand: 'node', dshBin: require.resolve('@deepseek-ai/dsh/lib/bin.js') };
+}
+
+/**
+ * dsh-tools 包目录（dsh 包的同级依赖）。
+ * .agent-presets 预设目录没有 node_modules，插件加载 @deepseek-ai/dsh-tools 失败时
+ * 用这个绝对路径回退解析（launch 注入 MUYUJIAN_DSH_TOOLS_PATH）。
+ */
+export function resolveDshToolsDir(dshBin: string): string {
+  return path.join(path.dirname(dshBin), '..', '..', 'dsh-tools');
 }
 
 /**

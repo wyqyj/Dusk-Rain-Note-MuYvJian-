@@ -325,6 +325,10 @@ export function createCapabilityRegistry(workspaceRoot: () => string): Map<strin
           items: { type: 'string' },
           description: '可选，限定来源 id 列表，如 ["note:xxx", "questionBook:yyy"]',
         },
+        bundleId: {
+          type: 'string',
+          description: '可选，限定单个知识库包 id（先用 knowledge_bundles 列出），只在包内来源中检索',
+        },
         limit: { type: 'number', description: '最大返回条数，默认 6' },
       },
       required: ['query'],
@@ -334,10 +338,21 @@ export function createCapabilityRegistry(workspaceRoot: () => string): Map<strin
     handler: (params) => {
       const query = String(params.query || '');
       const sourceIds = Array.isArray(params.sourceIds) ? params.sourceIds.map(String) : undefined;
+      const bundleIds = Array.isArray(params.bundleIds) ? params.bundleIds.map(String) : undefined;
+      const bundleId = typeof params.bundleId === 'string' && params.bundleId ? params.bundleId : undefined;
       const limit = typeof params.limit === 'number' ? params.limit : 6;
-      const results = knowledgeService.search(query, { sourceIds, limit });
+      const effectiveBundleIds = bundleId ? [bundleId, ...(bundleIds ?? [])] : bundleIds;
+      const results = knowledgeService.search(query, { sourceIds, limit, bundleIds: effectiveBundleIds });
       return { ok: true, results };
     },
+  });
+
+  add({
+    name: 'knowledge.bundles',
+    description: '列出工作台内已打包的知识库包（id、名称、描述与包含的来源列表）。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    sideEffect: 'read',
+    handler: () => ({ ok: true, bundles: knowledgeService.listBundles() }),
   });
 
   add({

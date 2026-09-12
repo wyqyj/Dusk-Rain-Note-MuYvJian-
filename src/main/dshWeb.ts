@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
-import { defaultPluginDirFor, resolveDshRuntimePaths, syncBusinessPlugin, buildMountPatch } from './dshWebProfile';
+import { defaultPluginDirFor, resolveDshRuntimePaths, resolveDshToolsDir, syncBusinessPlugin, buildMountPatch } from './dshWebProfile';
 import { buildPresetPatch, DshPresetId, syncNativeAgentPresets } from './dshPreset';
 import { readHarnessModelConfig, seedHarnessModelConfig } from './dshConfig';
 import { writeAgentToolManifest } from './agentToolManifest';
@@ -112,6 +112,7 @@ export class DshWebGui {
       no_proxy: '127.0.0.1,localhost',
       MUYUJIAN_LLM_API_KEY: apiKey,
       MUYUJIAN_TOOL_MANIFEST: manifestFile,
+      MUYUJIAN_DSH_TOOLS_PATH: resolveDshToolsDir(resolved.dshBin),
       ...(bridge ? { MUYUJIAN_BRIDGE_URL: bridge.url, MUYUJIAN_BRIDGE_TOKEN: bridge.token } : {}),
     };
     const cwd = deps.workspaceRoot();

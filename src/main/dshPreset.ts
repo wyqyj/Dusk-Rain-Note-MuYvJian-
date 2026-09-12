@@ -19,7 +19,8 @@ export const PRESETS: Record<DshPresetId, DshPreset> = {
 你拥有操作暮雨笺便签、计划、题册及知识库检索的能力：
 - 遇到便签、复习计划、题册相关任务时，优先调用 muyujian 工具集进行结构化管理，而非读写裸文件；
 - 对便签与计划的所有写操作，向用户说明意图并通过确认闸门执行；
-- 当用户询问笔记或题册内容时，主动调用 knowledge_search 检索工作区资料进行准确解答。`,
+- 当用户询问笔记或题册内容时，主动调用 knowledge_search 检索工作区资料进行准确解答；
+- 当用户提到知识库大包或想限定资料范围时，先用 knowledge_bundles 列出已打包的知识库包，再用 knowledge_search 的 bundleId 参数在包内检索。`,
   },
   research: {
     id: 'research',

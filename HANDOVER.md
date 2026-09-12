@@ -3,7 +3,7 @@
 最后更新：2026-09-11
 接手前请先读本文件，再按「执行顺序」一节开始。
 
-> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）、F2（Agent 预设基础框架）、F2b（研究预设 research-db 建库与检索）与 F3（文档生成 docx/xlsx/pdf）已落地；dsh 配置热重载（GUI 改配置自动重启运行时）已完成。2026-09-12：全部工作已提交（`f72ec31`、`5b26094`、`a0d6760`、`f75907a`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 83 用例通过 / 2 跳过 + 双侧 typecheck 全绿。
+> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）、F2（Agent 预设基础框架）、F2b（研究预设 research-db 建库与检索）与 F3（文档生成 docx/xlsx/pdf）已落地；dsh 配置热重载（GUI 改配置自动重启运行时）已完成。2026-09-12：全部工作已提交（`f72ec31`、`5b26094`、`a0d6760`、`f75907a`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 85 用例通过 / 2 跳过 + 双侧 typecheck 全绿；研究模式插件加载（.agent-presets 路径缺 node_modules）已用 MUYUJIAN_DSH_TOOLS_PATH 回退解析修复；知识库打包 UI 已美化并新增 knowledge.bundles / bundleId 与 Agent 联动。
 
 ## 一、项目速览
 

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { resolveDshRuntimePaths } from './dshRuntime';
 
 export { resolveDshRuntimePaths };
+export { resolveDshToolsDir } from './dshRuntime';
 
 /** 业务插件源码位置（与 dshRuntime 的 private helper 同一规则）。 */
 export function defaultPluginDirFor(): string {

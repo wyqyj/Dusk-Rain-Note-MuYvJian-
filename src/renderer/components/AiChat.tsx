@@ -252,12 +252,10 @@ export const AiChat: React.FC = () => {
 
             {knowledgeTab === 'bundles' ? (
               <div className="ai-bundle-panel">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>
-                    勾选打包知识库，提问时将同时检索包内所有资料：
-                  </span>
+                <div className="ai-bundle-panel-head">
+                  <span className="ai-bundle-hint">勾选打包知识库，提问时将同时检索包内所有资料</span>
                   {!creatingBundle && (
-                    <button className="primary mini" onClick={() => { setCreatingBundle(true); setNewBundleSelectedSources([]); }}>
+                    <button className="ai-bundle-add-btn" onClick={() => { setCreatingBundle(true); setNewBundleSelectedSources([]); }}>
                       + 打包新知识库
                     </button>
                   )}
@@ -265,7 +263,7 @@ export const AiChat: React.FC = () => {
 
                 {creatingBundle && (
                   <div className="ai-bundle-create-box">
-                    <div style={{ fontWeight: 'bold', fontSize: 12, marginBottom: 6 }}>新建多来源知识库包</div>
+                    <div className="ai-bundle-create-title">新建多来源知识库包</div>
                     <div className="ai-bundle-form-row">
                       <input
                         className="ai-bundle-input"
@@ -280,14 +278,12 @@ export const AiChat: React.FC = () => {
                         onChange={(e) => setNewBundleDesc(e.target.value)}
                       />
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary, #6b7280)', marginBottom: 4 }}>
-                      选择要归纳打包的笔记、题册或文件：
-                    </div>
+                    <div className="ai-bundle-form-hint">选择要归纳打包的笔记、题册或文件：</div>
                     <div className="ai-bundle-source-select">
                       {knowledgeSources.map((s) => {
                         const isIncluded = newBundleSelectedSources.includes(s.id);
                         return (
-                          <label key={s.id} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                          <label key={s.id} className="ai-bundle-source-option">
                             <input
                               type="checkbox"
                               checked={isIncluded}
@@ -299,17 +295,17 @@ export const AiChat: React.FC = () => {
                                 }
                               }}
                             />
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.title}>
+                            <span className="ai-bundle-source-option-text" title={s.title}>
                               {s.type === 'note' ? '📝' : s.type === 'questionBook' ? '📖' : '📄'} {s.title}
                             </span>
                           </label>
                         );
                       })}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <button className="secondary mini" onClick={() => setCreatingBundle(false)}>取消</button>
+                    <div className="ai-bundle-create-actions">
+                      <button className="ai-bundle-cancel-btn" onClick={() => setCreatingBundle(false)}>取消</button>
                       <button
-                        className="primary mini"
+                        className="ai-bundle-save-btn"
                         disabled={!newBundleName.trim() || newBundleSelectedSources.length === 0}
                         onClick={async () => {
                           if (!newBundleName.trim()) return;
@@ -333,13 +329,13 @@ export const AiChat: React.FC = () => {
 
                 <div className="ai-bundle-list">
                   {knowledgeBundles.length === 0 ? (
-                    <div className="ai-knowledge-empty">暂无知识库包，点击上方「+ 打包新知识库」可将多个笔记/题册/文件合并打包。</div>
+                    <div className="ai-bundle-empty">暂无知识库包，点击上方「+ 打包新知识库」可将多个笔记/题册/文件合并打包。</div>
                   ) : (
                     knowledgeBundles.map((b) => {
                       const checked = selectedBundleIds.includes(b.id);
                       return (
-                        <div key={b.id} className="ai-bundle-item">
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}>
+                        <div key={b.id} className={`ai-bundle-item ${checked ? 'checked' : ''}`}>
+                          <label className="ai-bundle-item-main">
                             <input
                               type="checkbox"
                               checked={checked}
@@ -351,23 +347,21 @@ export const AiChat: React.FC = () => {
                                 }
                               }}
                             />
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span>📦 {b.name}</span>
-                                <span style={{ fontSize: 11, fontWeight: 'normal', color: 'var(--text-secondary, #6b7280)' }}>
-                                  ({b.sourceIds.length} 个来源)
-                                </span>
+                            <div className="ai-bundle-item-text">
+                              <div className="ai-bundle-item-name">
+                                <span className="ai-bundle-item-icon">📦</span>
+                                <span className="ai-bundle-item-title">{b.name}</span>
+                                <span className="ai-bundle-count-badge">{b.sourceIds.length} 来源</span>
                               </div>
                               {b.description && (
-                                <div style={{ fontSize: 11, color: 'var(--text-secondary, #6b7280)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div className="ai-bundle-item-desc">
                                   {b.description}
                                 </div>
                               )}
                             </div>
                           </label>
                           <button
-                            className="mini"
-                            style={{ color: '#ef4444', borderColor: '#fca5a5' }}
+                            className="ai-bundle-delete-btn"
                             onClick={async () => {
                               if (confirm(`确认删除知识库包「${b.name}」吗？（不会删除原始内容）`)) {
                                 await window.electronAPI?.knowledgeDeleteBundle(b.id);
@@ -383,6 +377,12 @@ export const AiChat: React.FC = () => {
                     })
                   )}
                 </div>
+                {selectedBundleIds.length > 0 && (
+                  <div className="ai-bundle-selected-bar">
+                    <span>已选 {selectedBundleIds.length} 个知识库包，提问时将检索包内全部资料</span>
+                    <button className="ai-bundle-clear-btn" onClick={() => setSelectedBundleIds([])}>清空选择</button>
+                  </div>
+                )}
               </div>
             ) : (
               <div>

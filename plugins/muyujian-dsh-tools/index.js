@@ -12,6 +12,7 @@
  */
 
 const fs = require('fs');
+const path = require('path');
 
 exports.name = 'muyujian-dsh-tools';
 exports.inject = ['tools'];
@@ -27,7 +28,16 @@ function toParameterSpec(property, required) {
 }
 
 exports.apply = (ctx) => {
-  const { defineTool } = require('@deepseek-ai/dsh-tools');
+  let dshTools;
+  try {
+    dshTools = require('@deepseek-ai/dsh-tools');
+  } catch (error) {
+    // .agent-presets 预设目录没有 node_modules，回退到 launch 注入的 vendored 运行时路径
+    const pkgDir = process.env.MUYUJIAN_DSH_TOOLS_PATH;
+    if (!pkgDir) throw error;
+    dshTools = require(path.join(pkgDir, 'lib', 'index.js'));
+  }
+  const { defineTool } = dshTools;
   const manifestFile = process.env.MUYUJIAN_TOOL_MANIFEST;
   const bridgeUrl = process.env.MUYUJIAN_BRIDGE_URL;
   const bridgeToken = process.env.MUYUJIAN_BRIDGE_TOKEN;

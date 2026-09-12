@@ -342,6 +342,8 @@ export class KnowledgeService {
     // 合并显式传入的 sourceIds 与从 bundleIds 解析出的 sourceIds
     let effectiveSourceIds: string[] | undefined = undefined;
     const sourceIdSet = new Set<string>();
+    const hadExplicitFilter = (options?.sourceIds && options.sourceIds.length > 0)
+      || (options?.bundleIds && options.bundleIds.length > 0);
     if (options?.sourceIds && options.sourceIds.length > 0) {
       options.sourceIds.forEach((id) => sourceIdSet.add(id));
     }
@@ -351,6 +353,9 @@ export class KnowledgeService {
     }
     if (sourceIdSet.size > 0) {
       effectiveSourceIds = Array.from(sourceIdSet);
+    } else if (hadExplicitFilter) {
+      // 显式给了过滤条件但解析不到任何来源：返回空而不是检索全部
+      effectiveSourceIds = ["__none__"];
     }
 
     // 确保涉及的来源有同步
