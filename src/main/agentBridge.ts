@@ -126,7 +126,12 @@ export class AgentBridge {
   private async handleRequest(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     const reply = (status: number, body: unknown) => {
       const text = JSON.stringify(body);
-      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      // 每个响应都关闭连接：桥接会重启，禁止客户端复用可能已失效的 keep-alive socket。
+      response.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        Connection: 'close',
+      });
       response.end(text);
     };
     try {
