@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { KnowledgeService } from './knowledgeService';
+import { ResearchService } from './researchService';
 import { enqueueFile, readJsonValue, sanitizeNoteUpdates, writeAtomic } from './notesData';
 
 /**
@@ -53,6 +54,7 @@ function noteSummary(note: Record<string, unknown>): Record<string, unknown> {
  */
 export function createCapabilityRegistry(workspaceRoot: () => string): Map<string, CapabilitySpec> {
   const knowledgeService = new KnowledgeService(workspaceRoot);
+  const researchService = new ResearchService(workspaceRoot);
   const notesFile = (): string => path.join(workspaceRoot(), 'notes.json');
   const stateFile = (): string => path.join(workspaceRoot(), 'workspace.json');
   const questionBooksDir = (): string => path.join(workspaceRoot(), 'question-books');
@@ -333,6 +335,103 @@ export function createCapabilityRegistry(workspaceRoot: () => string): Map<strin
       const limit = typeof params.limit === 'number' ? params.limit : 6;
       const results = knowledgeService.search(query, { sourceIds, limit });
       return { ok: true, results };
+    },
+  });
+
+  add({
+    name: 'research.scan',
+    description: '扫描工作区全部文档（PDF/DOCX/XLSX/MD/TXT），解析文本并在 research-db/ 建立索引数据库。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        force: { type: 'boolean', description: '可选，true 时强制重新解析全部文件，默认 false' },
+      },
+      additionalProperties: false,
+    },
+    sideEffect: 'write',
+    handler: async (params) => {
+      const result = await researchService.scan(params.force === true);
+      return {
+        ok: true,
+        scanned: result.scanned,
+        parsed: result.parsed,
+        unchanged: result.unchanged,
+        failed: result.failed,
+        documents: result.documents,
+      };
+    },
+  });
+
+  add({
+    name: 'research.list',
+    description: '列出研究库（research-db）中已索引的全部文档元数据。',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    sideEffect: 'read',
+    handler: () => ({ ok: true, documents: researchService.listDocuments() }),
+  });
+
+  add({
+    name: 'research.read',
+    description: '读取研究库中一篇已解析文档的全文（可截断）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '文档 id（research_scan / research_list 返回）' },
+        maxLength: { type: 'number', description: '可选，最大返回字符数，默认 20000' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    sideEffect: 'read',
+    handler: (params) => {
+      const id = String(params.id || '');
+      if (!id) throw new Error('缺少参数 id');
+      const maxLength = typeof params.maxLength === 'number' ? params.maxLength : 20_000;
+      const doc = researchService.readDocument(id, maxLength);
+      if (!doc) return { ok: false, error: '未找到该文档' };
+      return { ok: true, meta: doc.meta, text: doc.text };
+    },
+  });
+
+  add({
+    name: 'research.search',
+    description: '在研究库（research-db）中全文检索，返回命中文档与片段。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '检索查询词' },
+        limit: { type: 'number', description: '最大返回条数，默认 8' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    sideEffect: 'read',
+    handler: (params) => {
+      const query = String(params.query || '');
+      const limit = typeof params.limit === 'number' ? params.limit : 8;
+      const results = researchService.search(query, limit);
+      return { ok: true, results };
+    },
+  });
+
+  add({
+    name: 'research.summary',
+    description: '读取研究库中一篇文档的元数据摘要（题目、摘要、章节大纲）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: '文档 id' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    sideEffect: 'read',
+    handler: (params) => {
+      const id = String(params.id || '');
+      if (!id) throw new Error('缺少参数 id');
+      const meta = researchService.getDocumentSummary(id);
+      if (!meta) return { ok: false, error: '未找到该文档' };
+      return { ok: true, meta };
     },
   });
 

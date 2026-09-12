@@ -142,6 +142,9 @@ dsh 插件体系为 Node/TS（Cordis），下列多为 Python 的 MCP server，�
 | mcp-pandoc | vivekVells · https://github.com/vivekVells/mcp-pandoc | MIT | pandoc 式文档转换工具抽象 | 备用方案参考（若启用 pandoc 路线再登记） |
 | markdown2pdf-mcp | 2b3pro · https://github.com/2b3pro/markdown2pdf-mcp | MIT | Markdown→PDF 工具参数设计 | 接口设计参考 |
 | FlexSearch（npm 库） | nextapps-de · https://github.com/nextapps-de/flexsearch | Apache-2.0 | 本地全文检索 | 已集成：`src/main/knowledgeService.ts` 检索引擎（tokenize: full），Top-5 注入问答与 `knowledge.search` 能力，单测 8 例；研究库检索（F2b）复用同引擎 |
+| pdf-parse（npm 库） | Mehmet Kozan · https://github.com/mehmet-kozan/pdf-parse | Apache-2.0 | PDF 文本提取 | 直接依赖 v2.4.5：`src/main/researchService.ts` research_scan 解析 PDF（`PDFParse` 类 + getText；v2 与 1.x API 完全不同） |
+| mammoth（npm 库） | mwilliamson · https://github.com/mwilliamson/node-mammoth | BSD-2-Clause | DOCX 文本提取 | 直接依赖：`src/main/researchService.ts` research_scan 解析 DOCX（extractRawText，无自带类型，已补 mammoth.d.ts） |
+| xlsx / SheetJS（npm 库） | SheetJS · https://github.com/SheetJS/sheetjs | Apache-2.0 | XLSX 解析 | 直接依赖：`src/main/researchService.ts` research_scan 解析 XLSX（sheet_to_csv 拼接全文） |
 | dsh 本体 | deepseek-ai/deepseek-harness（_ref/ 参考） | 见其仓库 | profile/patch/插件机制 | 既有内置（已定） |
 
 红线：以上任何参考项目的代码片段若被拷贝进入仓库，必须在文件头注明来源；优先「借鉴设计 + Node 生态自实现」。
@@ -153,7 +156,7 @@ dsh 插件体系为 Node/TS（Cordis），下列多为 Python 的 MCP server，�
 - 阶段 0（前置）：✅ 已完成——streaming BUG 修复、调试日志清理、基线全绿。
 - 阶段 1（F1 知识库）：✅ 已完成——knowledgeService + FlexSearch + AiChat 选择器与注入 + `knowledge.search` 能力 + 测试（8 例全绿）。
 - 阶段 2（F2 预设框架）：✅ 已完成——dshPreset + profile 物化参数化 + Agent 页预设切换。
-- 阶段 3（F2b 研究预设）：待实施——文件解析管线 + research-db 建库 + muyujian-research-tools 5 工具 + 预设提示词；端到端样例工作区验证（`_ref/samples/` 放 2-3 篇示例 PDF/DOCX）。
+- 阶段 3（F2b 研究预设）：✅ 已完成——researchService（scan/list/read/summary/search）+ `research.*` 五能力注册（自动透出 dsh 工具与对外 Bridge，未新建独立插件，与统一原则一致）+ 研究预设提示词接 research-db 建库引导 + 8 例单测 + 真实 PDF 冒烟验证。
 - 阶段 4（F3 文档插件）：待实施——muyujian-doc-tools 三工具 + 确认闸门接入 + 真实生成验证（Word 含表格、xlsx、中文字体 PDF）。
 - 阶段 5（收尾）：进行中——README / HANDOVER / WORK_LOG 已更新；本计划表「实际使用方式」列待 F2b/F3 补齐；截图与日志不留 Key。
 

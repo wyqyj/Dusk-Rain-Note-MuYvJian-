@@ -3,7 +3,7 @@
 最后更新：2026-09-11
 接手前请先读本文件，再按「执行顺序」一节开始。
 
-> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）与 F2（Agent 预设基础框架）已落地。2026-09-12：全部工作已提交（`f72ec31`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 67 用例通过 / 2 跳过 + 双侧 typecheck 全绿。
+> ✅ **当前状态**：第二阶段（Agent 一级化 + AI 统一配置 + 流式光标 BUG）已全部修复闭环并真实验证。第三阶段 F1（AI 助手知识库）、F2（Agent 预设基础框架）与 F2b（研究预设 research-db 建库与检索）已落地。2026-09-12：全部工作已提交（`f72ec31`、`5b26094`），临时调试脚本已清理，README 已补 AI/Agent 章节，质量基线 75 用例通过 / 2 跳过 + 双侧 typecheck 全绿。
 
 ## 一、项目速览
 
@@ -113,7 +113,7 @@
 
 ## 五、建议执行顺序（接手后）
 
-1. **F2b 研究预设**（`KNOWLEDGE_PRESETS_PLAN.md` 阶段 3）：`research-db/` 索引规范 → 解析管线（pdf-parse/mammoth/xlsx）→ `plugins/muyujian-research-tools/` 五工具 → 预设提示词接 initScript → 样例工作区端到端验证。
+1. **F2b 研究预设**（`KNOWLEDGE_PRESETS_PLAN.md` 阶段 3）：✅ 已完成——`research.*` 五能力经共享注册表透出（scan/list/read/search/summary），research-db 建库与检索就绪，8 例单测 + 真实 PDF 冒烟通过。
 2. **F3 文档生成插件**（阶段 4）：`plugins/muyujian-doc-tools/` 三工具 + 确认闸门接入 + 真实生成验证（中文字体 PDF 重点验）。
 3. dsh 配置热重载：GUI 改配置后自动重启 sdk/web 运行时。
 4. 发布前关卡：electron-builder 打包验证 + 全量手工回归 + `DSH_LIVE_KEY` live 测试。

@@ -24,12 +24,13 @@ export const PRESETS: Record<DshPresetId, DshPreset> = {
   research: {
     id: 'research',
     label: '研究预设',
-    description: '专注于学术文献、论文著作与深度资料分析，先检索验证再给出详尽解答。',
+    description: '专注于学术文献、论文著作与深度资料分析：先建 research-db 索引，先检索后作答。',
     systemPrompt: `你是「暮雨笺」学术研究助手，专注于文献研读、论文著作分析与概念考证。
 工作原则：
-1. 遇到学术问题或文献分析，优先调用 knowledge_search 检索本地已有文献、笔记和题册素材；
-2. 严谨标注文献出处、段落与依据，避免未经佐证的臆断；
-3. 输出结构清晰，分层阐述核心论点、论据与总结。`,
+1. 首次分析或资料可能更新时，先调用 research_scan 扫描工作区文档（PDF/DOCX/XLSX/MD/TXT），在 research-db/ 建立索引数据库；
+2. 回答论文、著作或资料问题前，必须先调用 research_search 检索研究库，再用 research_read 精读命中文档，回答时标注来源文件与章节；
+3. 严谨标注文献出处、段落与依据，避免未经佐证的臆断；
+4. 输出结构清晰，分层阐述核心论点、论据与总结。`,
   },
 };
 
@@ -89,9 +90,9 @@ export function syncNativeAgentPresets(homeDir: string, pluginSourceDir: string)
     {
       id: 'research',
       name: '研究模式',
-      description: '专注于学术文献、论文著作与深度资料分析，先检索验证再给出详尽解答。',
+      description: '专注于学术文献、论文著作与深度资料分析：先建 research-db 索引，先检索后作答。',
       order: 6,
-      personaPrefix: '你是「暮雨笺」学术研究助手，工作目录为 {{cwd}}，由 {{model}} 模型驱动。专注文献研读、论文著作分析与概念考证。',
+      personaPrefix: '你是「暮雨笺」学术研究助手，工作目录为 {{cwd}}，由 {{model}} 模型驱动。回答前先用 research_scan 建立 research-db 索引，再用 research_search / research_read 检索精读并标注出处。',
     },
   ];
 
