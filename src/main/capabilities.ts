@@ -543,5 +543,49 @@ export function createCapabilityRegistry(workspaceRoot: () => string): Map<strin
     },
   });
 
+  add({
+    name: 'doc.createPpt',
+    description: '把标题 + 幻灯片列表生成为 PowerPoint（.pptx）演示文稿，写入工作台 documents/ 目录。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fileName: { type: 'string', description: '文件名（不含扩展名）' },
+        title: { type: 'string', description: '演示文稿标题（可选，默认取文件名）' },
+        slides: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: '幻灯片标题（必填）' },
+              content: { type: 'string', description: '幻灯片正文（可选，换行分段）' },
+            },
+            required: ['title'],
+          },
+          description: '幻灯片列表，至少一页',
+        },
+      },
+      required: ['fileName', 'slides'],
+      additionalProperties: false,
+    },
+    sideEffect: 'write',
+    handler: async (params) => {
+      const fileName = String(params.fileName || '').trim();
+      if (!fileName) throw new Error('缺少参数 fileName');
+      const rawSlides = Array.isArray(params.slides) ? (params.slides as unknown[]) : [];
+      if (rawSlides.length === 0) throw new Error('缺少参数 slides（至少一页幻灯片）');
+      const slides = rawSlides
+        .map((item) => (item && typeof item === 'object' ? item as Record<string, unknown> : null))
+        .filter((item): item is Record<string, unknown> => item !== null)
+        .map((item) => ({ title: String(item.title ?? ''), content: typeof item.content === 'string' ? item.content : '' }))
+        .filter((slide) => slide.title.trim().length > 0);
+      if (slides.length === 0) throw new Error('每页幻灯片至少需要 title');
+      if (slides.length > 100) throw new Error('幻灯片最多 100 页');
+      const title = String(params.title ?? '').trim() || fileName;
+      const file = path.join(workspaceRoot(), 'documents', `${safeName(fileName)}.pptx`);
+      await docService.createPpt(title, slides, file);
+      return { ok: true, file, type: 'pptx', slideCount: slides.length };
+    },
+  });
+
   return registry;
 }

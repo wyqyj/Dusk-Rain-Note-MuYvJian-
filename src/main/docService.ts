@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import MarkdownIt from 'markdown-it';
 import HTMLToDOCX from 'html-to-docx';
+import PptxGenJS from 'pptxgenjs';
 import * as XLSX from 'xlsx';
 import { enqueueFile } from './notesData';
 
@@ -105,5 +106,28 @@ export class DocService {
         fs.rmSync(tmpHtml, { force: true });
       } catch {}
     }
+  }
+
+  async createPpt(title: string, slides: Array<{ title: string; content?: string }>, outFile: string): Promise<void> {
+    const pptx = new PptxGenJS();
+    if (title.trim()) pptx.title = title.trim();
+    for (const item of slides) {
+      const slide = pptx.addSlide();
+      slide.addText(item.title || '', {
+        x: 0.6, y: 0.6, w: 8.8, h: 0.9,
+        fontSize: 26, bold: true, fontFace: 'Microsoft YaHei', color: '1F2430',
+      });
+      if (item.content && item.content.trim()) {
+        slide.addText(item.content.trim(), {
+          x: 0.6, y: 1.7, w: 8.8, h: 4.2,
+          fontSize: 14, fontFace: 'Microsoft YaHei', color: '3A4150', lineSpacingMultiple: 1.4,
+        });
+      }
+    }
+    const buffer = await pptx.write({ outputType: 'nodebuffer' }) as Buffer;
+    await enqueueFile(outFile, () => {
+      fs.mkdirSync(path.dirname(outFile), { recursive: true });
+      fs.writeFileSync(outFile, buffer);
+    });
   }
 }

@@ -65,4 +65,17 @@ describe('DocService', () => {
     const outFile = path.join(root, 'docs', '文档.pdf');
     await expect(service.createPdf('文档', '# 标题\n内容', outFile)).rejects.toThrow('PDF 生成需要 Electron 环境');
   });
+
+  it('creates a pptx presentation as a valid zip package', async () => {
+    const outFile = path.join(root, 'docs', '汇报.pptx');
+    await service.createPpt('汇报', [
+      { title: '第一页', content: '注意力机制综述' },
+      { title: '第二页', content: 'Transformer 使用自注意力建模。' },
+    ], outFile);
+    expect(fs.existsSync(outFile)).toBe(true);
+    const head = fs.readFileSync(outFile).subarray(0, 2).toString('latin1');
+    expect(head).toBe('PK');
+    const raw = fs.readFileSync(outFile);
+    expect(raw.includes(Buffer.from('presentation.xml'))).toBe(true);
+  });
 });
