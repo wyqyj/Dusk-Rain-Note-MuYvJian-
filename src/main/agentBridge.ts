@@ -5,7 +5,7 @@ import { createCapabilityRegistry, type CapabilitySpec } from './capabilities';
 /**
  * 对外接入 Agent 的本地桥服务。
  *
- * 安全模型（与 AGENT_BRIDGE_PLAN.md 对齐）：
+ * 安全模型（与 docs/archive/AGENT_BRIDGE_PLAN.md 对齐）：
  * - 默认关闭；开启后绑定地址可选 127.0.0.1（仅本机）或 0.0.0.0（局域网）。
  * - 所有请求都需要 Authorization: Bearer <token>，token 存在应用配置中并可手动重置。
  * - 能力走白名单注册表；不允许删除数据、导出备份、读取 AI Key。

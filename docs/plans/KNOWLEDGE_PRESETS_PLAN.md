@@ -7,7 +7,7 @@
 
 ## 0. 前置任务（接手先行项）
 
-1. 修复 AiChat streaming BUG（光标不消失，线索见 HANDOVER.md「🔴 正在修的 BUG」），并清理 `[ai-rx]`/`[ai]` 调试日志。
+1. 修复 AiChat streaming BUG（光标不消失，线索见 ../HANDOVER.md「🔴 正在修的 BUG」），并清理 `[ai-rx]`/`[ai]` 调试日志。
 2. `npm run build:renderer && npm test && npm run typecheck` 全绿后，才进入本计划。
 
 ---

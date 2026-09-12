@@ -45,7 +45,7 @@ Windows 用户可直接双击 `启动暮雨笺.bat`。依赖缺失时脚本会�
 ## 4. 发布流程
 
 1. 更新 `package.json` 和 `package-lock.json` 版本号。
-2. 更新 `CHANGELOG.md` 和 `RELEASE_NOTES_<version>.md`。
+2. 更新 `../CHANGELOG.md` 和 `releases/RELEASE_NOTES_<version>.md`。
 3. 执行 `npm run typecheck`、`npm test`、`npm run build`。
 4. 确认 `resources/pandoc/pandoc.exe` 存在，执行 `npm run dist` 或双击 `打包.bat`。
 5. 检查 `release/` 中的 NSIS 安装包名称和大小；不要提交 `dist/`、`release/`、`node_modules/` 或本地数据。

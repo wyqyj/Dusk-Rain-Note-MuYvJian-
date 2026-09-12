@@ -1,7 +1,7 @@
 # 暮雨笺内置 DeepSeek Harness 计划书
 
 日期：2026-09-10
-状态：**已决策**——暮雨笺的 Agent 功能确定通过内置 DeepSeek Harness（dsh）实现，采用本文方案，待实施。本文取代 `INLINE_AGENT_PLAN.md` 作为内置 Agent 的唯一实施依据；其中「确认闸门、能力白名单、复用 enqueueFile」三条原则全部保留。
+状态：**已决策**——暮雨笺的 Agent 功能确定通过内置 DeepSeek Harness（dsh）实现，采用本文方案，待实施。本文取代 `../archive/INLINE_AGENT_PLAN.md` 作为内置 Agent 的唯一实施依据；其中「确认闸门、能力白名单、复用 enqueueFile」三条原则全部保留。
 参考源码：`_ref/deepseek-harness/`（已 gitignore，仅本机参考，可删）
 
 ## 一、实施方案
@@ -91,4 +91,4 @@
 
 - **放弃手写 function-calling 循环**（原 INLINE_AGENT_PLAN 阶段 B/C 的 `agentRunner.ts`）→ 由 dsh agent-loop 承担；但能力白名单、确认闸门、审计三项安全设计完整迁移。
 - UI 侧"问答/Agent"双模式保留：普通问答继续走现有 `aiService` 直连（轻量、离线可降级），Agent 模式走 dsh。
-- `INLINE_AGENT_PLAN.md` 保留作历史参考，不再更新；后续状态以本文件为准。
+- `../archive/INLINE_AGENT_PLAN.md` 保留作历史参考，不再更新；后续状态以本文件为准。

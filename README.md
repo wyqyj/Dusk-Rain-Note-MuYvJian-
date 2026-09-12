@@ -2,7 +2,7 @@
 
 > v3.0.8 新增安全的 AI 写作与学习助手，可在笔记中生成摘要、提纲、复习卡片和润色建议。
 
-> [查看完整更新告示](UPDATE_NOTICES.md)，按版本集中记录每次功能、修复和发布变化。
+> [查看完整更新告示](UPDATE_NOTICES.md)，按版本集中记录每次功能、修复和发布变化。项目计划书、工作日志与交接文件见 [docs/README.md](docs/README.md)。
 
 融合记事本、待办管理与快速随笔记的桌面应用，支持 Markdown 和 LaTeX 实时渲染。提供简体中文与古风两种文字风格。
 
@@ -143,7 +143,7 @@ npx electron .
 
 打包使用 `node_modules/electron/dist` 准备本地 Electron 运行时到 `electron-dist-local/`，该目录为本机构建缓存并已被 Git 忽略；首次打包前只需完成 `npm ci`。
 
-维护者可从 [MAINTENANCE_GUIDE.md](MAINTENANCE_GUIDE.md) 查看功能到代码文件的索引、数据边界、测试与发布检查清单。
+维护者可从 [MAINTENANCE_GUIDE.md](docs/MAINTENANCE_GUIDE.md) 查看功能到代码文件的索引、数据边界、测试与发布检查清单。
 
 `dist`、`release`、`node_modules` 与本地工作台备份均为可再生或用户私有数据，已由 `.gitignore` 排除，不应提交到 GitHub。
 

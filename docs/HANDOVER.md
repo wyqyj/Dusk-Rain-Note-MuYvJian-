@@ -15,7 +15,7 @@
 ## 二、已完成工作
 
 ### 1. 安全与健壮性审查修复（全部完成）
-- 15 项问题清单与修复记录见根目录 `FIX_PLAN.md`；测试 36 个用例全绿（`npm test`）。
+- 15 项问题清单与修复记录见 `archive/FIX_PLAN.md`；测试 36 个用例全绿（`npm test`）。
 - 曾出现 CSP meta 导致开发模式白屏的回归，已修复（dev 下由 vite 注入资源，meta 只保留在打包产物）。
 
 ### 2. AI 助手重构（完成）
@@ -30,7 +30,7 @@
 - 测试：`src/main/agentBridge.test.ts` 8 个用例全绿。
 
 ### 4. 内置 Agent（DeepSeek Harness，阶段 A–E 已实现）
-- 方案：内置 dsh 子进程，见 `DEEPSEEK_HARNESS_PLAN.md`；旧方案 `INLINE_AGENT_PLAN.md` 仅作历史参考。dsh 源码参考在 `_ref/deepseek-harness/`（已 gitignore，可删）。
+- 方案：内置 dsh 子进程，见 `plans/DEEPSEEK_HARNESS_PLAN.md`；旧方案 `archive/INLINE_AGENT_PLAN.md` 仅作历史参考。dsh 源码参考在 `_ref/deepseek-harness/`（已 gitignore，可删）。
 - A 能力层：`src/main/capabilities.ts` 共享能力注册表，`agentBridge.ts` 改消费它。
 - B 运行时：`src/main/dshRuntime.ts`（惰性拉起 `node dsh --profile sdk`、崩溃重建、停止=重启运行时）；IPC `dsh-agent-run/stop/status`；AiChat 有「问答/Agent」模式切换。
 - C 业务工具：`src/main/agentToolManifest.ts` 序列化能力清单；`plugins/muyujian-dsh-tools/` Cordis 插件把能力注册成 dsh 工具，执行体回调内置 Bridge；`prepareSdkProfile()` 物化 profile、同步插件、生成 `--patch`（挂载插件 + 禁用 tool-bash/pwsh/fs/fs-search/web/subagent/workflow 等危险内置工具）。已用真实 dsh 启动冒烟验证插件加载。
@@ -46,7 +46,7 @@
 - 修复 2（重要）：dsh CLI 依赖 `import.meta.main`（Node 24+），内置 Node 22.14 完全跑不起 dsh；`scripts/fetch-node.mjs` 已升 24.19.0 并重新下载。
 - Web GUI 接入已完成：`src/main/dshWeb.ts`（子进程拉起、stdout 截 URL、30s 超时、启停/重启）、`src/main/dshWebProfile.ts`（web profile 物化 + 只挂业务插件的 patch，不禁用内置工具）、IPC `dsh-web-start/stop/status`、preload/vite-env 同步、AiChat.tsx Agent 面板改 `<webview>` 嵌入（惰性启动 + 错误重试态）、CSS `ai-agent-*`。
 - 09-11 补修两处：CSP `frame-src` 放行回环地址（否则 webview 必白屏）；`dshWeb.launch()` 补写 `muyujian-tools.json` 清单（此前只在 SDK 运行时写，web 路径报 ENOENT 退出）。
-- 验证状态：已完成端到端实测（2026-09-11）：webview GUI 正常渲染（截图 scripts/webview-gui-check.png）、走网关问答成功、web GUI 内 `notes_list` 工具调用成功。期间补了两个修复：`writeLlmSettings` 增加 `agent-default-model`（否则 GUI 默认为 deepseek-official 路由）、`validateAiBaseUrl` 自动补 `/v1`（否则 baseUrl 无 v1 时请求落到网关 SPA 首页，`Stream ended without finish_reason`）。详见 WORK_LOG_2026-09-11.md 首部。
+- 验证状态：已完成端到端实测（2026-09-11）：webview GUI 正常渲染（截图 scripts/webview-gui-check.png）、走网关问答成功、web GUI 内 `notes_list` 工具调用成功。期间补了两个修复：`writeLlmSettings` 增加 `agent-default-model`（否则 GUI 默认为 deepseek-official 路由）、`validateAiBaseUrl` 自动补 `/v1`（否则 baseUrl 无 v1 时请求落到网关 SPA 首页，`Stream ended without finish_reason`）。详见 logs/WORK_LOG_2026-09-11.md 首部。
 
 ### 追加：第二阶段 —— Agent 升为一级导航 + AI 助手与 Agent 共用配置（功能已落地，BUG 未修完）
 
@@ -68,7 +68,7 @@
 1. 修上面的 streaming BUG 并端到端复验（发消息→delta→done→光标消失→会话持久化）。
 2. 复验：在 dsh GUI 改模型/Key 后 AI 助手状态徽标同步（注意：dsh sdk 运行时与 web 子进程缓存 apiKey 于 env，改配置后可能需要重启 Agent 页或应用——此为已知未做的完善项，可考虑监听配置变化自动重启运行时）。
 3. 删除调试日志与临时脚本（`scripts/ai-chat-debug.mjs`、`ai-chat-smoke.mjs`、`main-fetch-smoke.mjs`、`app-stdout.log` 可留可删）。
-4. 更新 `WORK_LOG_2026-09-11.md` 与 README 的 AI/Agent 章节。
+4. 更新 `logs/WORK_LOG_2026-09-11.md` 与 README 的 AI/Agent 章节。
 5. 凭证红线：`dsh-home/.credentials.yaml` 含真实 Key，任何截图/日志/提交不得外泄。
 
 
@@ -88,12 +88,12 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `FIX_PLAN.md` | 15 项审查问题与修复计划 |
-| `WORK_LOG_2026-09-10.md` | 逐阶段工作日志（阶段 A–F + 启动实测修复） |
-| `WORK_LOG_2026-09-11.md` | dsh Web GUI 收尾验证日志（当前最新） |
-| `AGENT_BRIDGE_PLAN.md` | 对外桥方案（已实现） |
-| `DEEPSEEK_HARNESS_PLAN.md` | 内置 Agent（dsh）方案与里程碑 |
-| `INLINE_AGENT_PLAN.md` | 内置 Agent 旧方案（历史参考，不再更新） |
+| `archive/FIX_PLAN.md` | 15 项审查问题与修复计划 |
+| `logs/WORK_LOG_2026-09-10.md` | 逐阶段工作日志（阶段 A–F + 启动实测修复） |
+| `logs/WORK_LOG_2026-09-11.md` | dsh Web GUI 收尾验证日志（当前最新） |
+| `archive/AGENT_BRIDGE_PLAN.md` | 对外桥方案（已实现） |
+| `plans/DEEPSEEK_HARNESS_PLAN.md` | 内置 Agent（dsh）方案与里程碑 |
+| `archive/INLINE_AGENT_PLAN.md` | 内置 Agent 旧方案（历史参考，不再更新） |
 | `bridge/README.md` | Agent 调用方式与能力清单 |
 | `src/main/notesData.ts` | 便签文件读写、`enqueueFile`、`mergeNotes`、`sanitizeNoteUpdates` |
 | `src/main/index.ts` | 主进程入口、全部 IPC、窗口/菜单 |
@@ -113,11 +113,11 @@
 
 ## 五、建议执行顺序（接手后）
 
-1. **F2b 研究预设**（`KNOWLEDGE_PRESETS_PLAN.md` 阶段 3）：✅ 已完成——`research.*` 五能力经共享注册表透出（scan/list/read/search/summary），research-db 建库与检索就绪，8 例单测 + 真实 PDF 冒烟通过。
+1. **F2b 研究预设**（`plans/KNOWLEDGE_PRESETS_PLAN.md` 阶段 3）：✅ 已完成——`research.*` 五能力经共享注册表透出（scan/list/read/search/summary），research-db 建库与检索就绪，8 例单测 + 真实 PDF 冒烟通过。
 2. **F3 文档生成插件**（阶段 4）：✅ 已完成——doc.createWord / doc.createSheet / doc.createPdf 经共享注册表透出（写入 `documents/`，走确认闸门），真实 Electron PDF 冒烟通过。
 3. dsh 配置热重载：GUI 改配置后自动重启 sdk/web 运行时。
 4. 发布前关卡：electron-builder 打包验证 + 全量手工回归 + `DSH_LIVE_KEY` live 测试。
-5. 「内置 Agent」阶段 A–F 已全部完成（含 kimi-k3 真实 E2E 与中文路径修复）；改 dsh 前先读 `DEEPSEEK_HARNESS_PLAN.md` 与 `src/main/dshRuntime.ts`。
+5. 「内置 Agent」阶段 A–F 已全部完成（含 kimi-k3 真实 E2E 与中文路径修复）；改 dsh 前先读 `plans/DEEPSEEK_HARNESS_PLAN.md` 与 `src/main/dshRuntime.ts`。
 6. 若要改设置页：优先在 `StudyWorkbench.tsx` 的 settings 视图插入独立组件文件，不要再往超长行里堆 JSX。
 7. 每次新增 IPC / 能力，同步三处：`preload.ts`、`vite-env.d.ts`、对应面板；能力结构变化还要同步 `bridge/muyujian-mcp.js` 与 `bridge/README.md`。
 
