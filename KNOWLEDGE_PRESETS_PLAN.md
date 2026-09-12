@@ -144,7 +144,9 @@ dsh 插件体系为 Node/TS（Cordis），下列多为 Python 的 MCP server，�
 | FlexSearch（npm 库） | nextapps-de · https://github.com/nextapps-de/flexsearch | Apache-2.0 | 本地全文检索 | 已集成：`src/main/knowledgeService.ts` 检索引擎（tokenize: full），Top-5 注入问答与 `knowledge.search` 能力，单测 8 例；研究库检索（F2b）复用同引擎 |
 | pdf-parse（npm 库） | Mehmet Kozan · https://github.com/mehmet-kozan/pdf-parse | Apache-2.0 | PDF 文本提取 | 直接依赖 v2.4.5：`src/main/researchService.ts` research_scan 解析 PDF（`PDFParse` 类 + getText；v2 与 1.x API 完全不同） |
 | mammoth（npm 库） | mwilliamson · https://github.com/mwilliamson/node-mammoth | BSD-2-Clause | DOCX 文本提取 | 直接依赖：`src/main/researchService.ts` research_scan 解析 DOCX（extractRawText，无自带类型，已补 mammoth.d.ts） |
-| xlsx / SheetJS（npm 库） | SheetJS · https://github.com/SheetJS/sheetjs | Apache-2.0 | XLSX 解析 | 直接依赖：`src/main/researchService.ts` research_scan 解析 XLSX（sheet_to_csv 拼接全文） |
+| xlsx / SheetJS（npm 库） | SheetJS · https://github.com/SheetJS/sheetjs | Apache-2.0 | XLSX 解析与生成 | 直接依赖：research_scan 解析 XLSX（sheet_to_csv）+ doc_createSheet 生成 xlsx（aoa_to_sheet / write），未引入 exceljs |
+| markdown-it（npm 库） | markdown-it · https://github.com/markdown-it/markdown-it | MIT | Markdown 解析 | 直接依赖：`src/main/docService.ts` doc_createPdf / doc_createWord 的 Markdown → HTML 渲染 |
+| html-to-docx（npm 库） | privateOmega · https://github.com/privateOmega/html-to-docx | MIT | HTML → docx 生成 | 直接依赖（既有）：`src/main/docService.ts` doc_createWord 生成 .docx，未新装 docx 库 |
 | dsh 本体 | deepseek-ai/deepseek-harness（_ref/ 参考） | 见其仓库 | profile/patch/插件机制 | 既有内置（已定） |
 
 红线：以上任何参考项目的代码片段若被拷贝进入仓库，必须在文件头注明来源；优先「借鉴设计 + Node 生态自实现」。
@@ -157,8 +159,8 @@ dsh 插件体系为 Node/TS（Cordis），下列多为 Python 的 MCP server，�
 - 阶段 1（F1 知识库）：✅ 已完成——knowledgeService + FlexSearch + AiChat 选择器与注入 + `knowledge.search` 能力 + 测试（8 例全绿）。
 - 阶段 2（F2 预设框架）：✅ 已完成——dshPreset + profile 物化参数化 + Agent 页预设切换。
 - 阶段 3（F2b 研究预设）：✅ 已完成——researchService（scan/list/read/summary/search）+ `research.*` 五能力注册（自动透出 dsh 工具与对外 Bridge，未新建独立插件，与统一原则一致）+ 研究预设提示词接 research-db 建库引导 + 8 例单测 + 真实 PDF 冒烟验证。
-- 阶段 4（F3 文档插件）：待实施——muyujian-doc-tools 三工具 + 确认闸门接入 + 真实生成验证（Word 含表格、xlsx、中文字体 PDF）。
-- 阶段 5（收尾）：进行中——README / HANDOVER / WORK_LOG 已更新；本计划表「实际使用方式」列待 F2b/F3 补齐；截图与日志不留 Key。
+- 阶段 4（F3 文档插件）：✅ 已完成——docService（doc.createWord 用 html-to-docx、doc.createSheet 用 SheetJS、doc.createPdf 用 Electron printToPDF）+ 三能力注册（write 走确认闸门）+ 5 例单测（docx/xlsx 回读、非 Electron 环境 PDF 明确拒绝）+ 真实 Electron PDF 冒烟（21KB，中文字体正常）。未新建独立插件，与统一原则一致。
+- 阶段 5（收尾）：进行中——README / HANDOVER / WORK_LOG 已更新；本计划表「实际使用方式」列已补齐（F1/F2b/F3 直接依赖）；截图与日志不留 Key。
 
 每阶段完成即跑：`npm run build:renderer && npm test && npm run typecheck`；需要真网关时沿用 `DSH_LIVE_KEY` 门控用例模式新增 live 测试。
 

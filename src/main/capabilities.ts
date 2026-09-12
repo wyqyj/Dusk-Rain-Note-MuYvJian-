@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { KnowledgeService } from './knowledgeService';
 import { ResearchService } from './researchService';
+import { DocService } from './docService';
 import { enqueueFile, readJsonValue, sanitizeNoteUpdates, writeAtomic } from './notesData';
 
 /**
@@ -55,6 +56,7 @@ function noteSummary(note: Record<string, unknown>): Record<string, unknown> {
 export function createCapabilityRegistry(workspaceRoot: () => string): Map<string, CapabilitySpec> {
   const knowledgeService = new KnowledgeService(workspaceRoot);
   const researchService = new ResearchService(workspaceRoot);
+  const docService = new DocService();
   const notesFile = (): string => path.join(workspaceRoot(), 'notes.json');
   const stateFile = (): string => path.join(workspaceRoot(), 'workspace.json');
   const questionBooksDir = (): string => path.join(workspaceRoot(), 'question-books');
@@ -432,6 +434,97 @@ export function createCapabilityRegistry(workspaceRoot: () => string): Map<strin
       const meta = researchService.getDocumentSummary(id);
       if (!meta) return { ok: false, error: '未找到该文档' };
       return { ok: true, meta };
+    },
+  });
+
+  add({
+    name: 'doc.createWord',
+    description: '把 Markdown 内容生成为 Word（.docx）文档，写入工作台 documents/ 目录。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fileName: { type: 'string', description: '文件名（不含扩展名）' },
+        title: { type: 'string', description: '文档标题（可选，默认取文件名）' },
+        content: { type: 'string', description: 'Markdown 正文' },
+      },
+      required: ['fileName', 'content'],
+      additionalProperties: false,
+    },
+    sideEffect: 'write',
+    handler: async (params) => {
+      const fileName = String(params.fileName || '').trim();
+      const content = String(params.content ?? '');
+      if (!fileName) throw new Error('缺少参数 fileName');
+      if (!content.trim()) throw new Error('缺少参数 content');
+      if (content.length > MAX_IMPORT_BYTES) throw new Error('内容超过 512KB 上限');
+      const title = String(params.title ?? '').trim() || fileName;
+      const file = path.join(workspaceRoot(), 'documents', `${safeName(fileName)}.docx`);
+      await docService.createWord(title, content, file);
+      return { ok: true, file, type: 'docx' };
+    },
+  });
+
+  add({
+    name: 'doc.createSheet',
+    description: '把表头 + 行数据生成为 Excel（.xlsx）表格，写入工作台 documents/ 目录。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fileName: { type: 'string', description: '文件名（不含扩展名）' },
+        sheetName: { type: 'string', description: '工作表名（可选，默认文件名）' },
+        headers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '表头列名（可选）',
+        },
+        rows: {
+          type: 'array',
+          items: { type: 'array', items: {} },
+          description: '行数据，每行为一维数组',
+        },
+      },
+      required: ['fileName', 'rows'],
+      additionalProperties: false,
+    },
+    sideEffect: 'write',
+    handler: async (params) => {
+      const fileName = String(params.fileName || '').trim();
+      if (!fileName) throw new Error('缺少参数 fileName');
+      const rows = Array.isArray(params.rows) ? (params.rows as unknown[]) : [];
+      if (rows.length === 0) throw new Error('缺少参数 rows（至少一行数据）');
+      const headers = Array.isArray(params.headers) ? (params.headers as unknown[]).map((h) => String(h)) : [];
+      const matrix = rows.map((row) => (Array.isArray(row) ? row : [row]));
+      const sheetName = String(params.sheetName ?? '').trim() || fileName;
+      const file = path.join(workspaceRoot(), 'documents', `${safeName(fileName)}.xlsx`);
+      await docService.createSheet(sheetName, headers, matrix, file);
+      return { ok: true, file, type: 'xlsx', rowCount: matrix.length };
+    },
+  });
+
+  add({
+    name: 'doc.createPdf',
+    description: '把 Markdown 内容渲染并生成为 PDF 文档，写入工作台 documents/ 目录（走 Electron printToPDF，中文字体友好）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fileName: { type: 'string', description: '文件名（不含扩展名）' },
+        title: { type: 'string', description: '文档标题（可选，默认取文件名）' },
+        content: { type: 'string', description: 'Markdown 正文' },
+      },
+      required: ['fileName', 'content'],
+      additionalProperties: false,
+    },
+    sideEffect: 'write',
+    handler: async (params) => {
+      const fileName = String(params.fileName || '').trim();
+      const content = String(params.content ?? '');
+      if (!fileName) throw new Error('缺少参数 fileName');
+      if (!content.trim()) throw new Error('缺少参数 content');
+      if (content.length > MAX_IMPORT_BYTES) throw new Error('内容超过 512KB 上限');
+      const title = String(params.title ?? '').trim() || fileName;
+      const file = path.join(workspaceRoot(), 'documents', `${safeName(fileName)}.pdf`);
+      await docService.createPdf(title, content, file);
+      return { ok: true, file, type: 'pdf' };
     },
   });
 
