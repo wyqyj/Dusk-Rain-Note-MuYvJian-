@@ -48,6 +48,15 @@ function sheetNameFor(title: string): string {
 }
 
 export class DocService {
+  private async importElectron(): Promise<Record<string, unknown> | null> {
+    try {
+      return (await import('electron')) as unknown as Record<string, unknown>;
+    } catch {
+      // 依赖以 --ignore-scripts 安装时，electron 包会因缺少二进制直接抛错。
+      return null;
+    }
+  }
+
   async createWord(title: string, content: string, outFile: string): Promise<void> {
     const body = title.trim() ? `<h1>${escapeHtml(title.trim())}</h1>\n${markdownToHtml(content)}` : markdownToHtml(content);
     const buffer = await HTMLToDOCX(body, null, { footer: true, pageNumber: true });
@@ -73,9 +82,9 @@ export class DocService {
   }
 
   async createPdf(title: string, content: string, outFile: string): Promise<void> {
-    const electron = (await import('electron')) as unknown as Record<string, unknown>;
-    const BrowserWindow = electron.BrowserWindow;
-    if (typeof BrowserWindow !== 'function') {
+    const electron = await this.importElectron();
+    const BrowserWindow = electron?.BrowserWindow;
+    if (!electron || typeof BrowserWindow !== 'function') {
       throw new Error('PDF 生成需要 Electron 环境（printToPDF）');
     }
     const html = buildStyledHtml(title, markdownToHtml(content));

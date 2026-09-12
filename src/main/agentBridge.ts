@@ -100,6 +100,8 @@ export class AgentBridge {
     if (!this.server) return;
     const server = this.server;
     this.server = null;
+    // 先断开 keep-alive 连接，避免客户端在重启或测试间复用已被回收的 socket。
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     this.recordAudit('bridge stopped');
   }
